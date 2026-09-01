@@ -188,11 +188,23 @@ class PromptSettingsConfig(PluginConfigBase):
     )
 
 
+class PluginBaseConfig(PluginConfigBase):
+    """插件基础配置（MaiBot 运行时要求的 [plugin] 配置节）"""
+
+    __ui_label__ = "插件基础设置"
+
+    config_version: str = Field(default="1.0.0", description="配置版本号")
+    enabled: bool = Field(default=True, description="是否启用插件")
+
+
 class ScheduleAssistantConfig(PluginConfigBase):
     """插件完整配置"""
 
     __ui_label__ = "日程提醒助手"
 
+    plugin: PluginBaseConfig = Field(
+        default_factory=PluginBaseConfig, description="插件基础配置"
+    )
     basic: BasicSettingsConfig = Field(
         default_factory=BasicSettingsConfig, description="基础设置"
     )

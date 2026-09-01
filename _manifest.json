@@ -40,8 +40,9 @@
   "plugin_type": "tool",
   "display": {
     "icon": {
-      "type": "emoji",
-      "value": "📅"
+      "type": "local",
+      "value": "logo.png",
+      "fallback": "package"
     }
   },
   "capabilities": ["send.text", "send.custom", "chat.get_stream_by_user_id", "maisaka.proactive.trigger", "llm.generate", "config.get"],
