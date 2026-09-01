@@ -2,7 +2,7 @@
 
 <img src="https://raw.githubusercontent.com/OMSociety/maibot_plugin_schedule_assistant/main/logo.png" width="120" alt="ScheduleAssistant Logo" />
 
-# 📅 日程提醒助手
+# 📅 Schedule Assistant 日程提醒助手
 
 **贴心日程管家** —— 早安播报 · 日程智能提醒 · 习惯提醒 · Apple 日历同步 · Notion 待办
 
@@ -30,7 +30,6 @@
 | 🗓️ **日程管理** | LLM 自然语言创建 / 删除 / 查询 / 修改日程（明天9点、后天下午3点都能懂） |
 | 🔄 **Apple 日历同步** | iCloud CalDAV 双向同步（读取 / 写入 / 删除事件） |
 | 📋 **Notion 待办** | 待办同步进早安播报（Maton 代理） |
-| 🧠 **人格一致** | 播报直接读取 MaiBot 全局人格，语气与日常聊天完全一致 |
 
 ---
 
@@ -39,8 +38,8 @@
 ### 早安播报（固定格式）
 每天 `morning_report_time` 推送：称呼语 + 日期 + 天气 + 今日日程表格 + 待办表格，Markdown 排版。
 
-### 日程提醒（固定格式，100% 推送）
-日程临近时（提前 `schedule_reminder_minutes` 分钟）LLM 生成提醒文本并直接发送——**不走 Maisaka 决策，保证送达**。
+### 日程提醒（固定格式）
+日程临近时（提前 `schedule_reminder_minutes` 分钟）LLM 生成提醒文本并直接发送。
 
 ### 习惯提醒（Maisaka 拟人开口）
 洗澡 / 睡觉 / 喝水到点后，调用 `ctx.maisaka.proactive.trigger()` 让 Maisaka 基于人格自己决定怎么说、说多少。
