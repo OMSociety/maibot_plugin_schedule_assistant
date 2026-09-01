@@ -110,7 +110,9 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | 提醒 Prompt | `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
 | 提醒 Prompt | `prompt_schedule` | string | `""` | 日程提醒模板。占位符：`{item_title} {time_label} {ahead_label} {item_context}` |
 
----
+> 💡 **WebCal 订阅安全**：`webcal_urls` 只接受公网 `https://` 订阅地址（`webcal://` 自动转 `https://`）。插件会拒绝 `localhost`、内网（如 `192.168.x` / `10.x`）、云元数据（`169.254.169.254`）等地址（防 SSRF）。请勿填写内网或本机地址。
+
+--
 
 ## 🛠️ LLM 可调用工具
 

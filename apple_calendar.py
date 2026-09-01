@@ -4,6 +4,7 @@
 import asyncio
 import base64
 import html
+import ipaddress
 import logging
 import re
 import time
@@ -446,9 +447,69 @@ class AppleCalendar:
 
         return events
 
+    @staticmethod
+    def _is_safe_webcal_url(url) -> bool:
+        """校验 WebCal 订阅地址是否安全（仅 http/https + 公网主机）。
+
+        防 SSRF：拒绝 localhost / 内网 / 环回 / 链路本地 / 云元数据等地址。
+        主机为 IP 字面量时直接校验；否则按主机名后缀与已知元数据主机做黑名单。
+        域名解析（rebinding）风险应在部署侧/README 中另行提示。
+
+        Args:
+            url: 待校验的 WebCal 地址（允许 webcal:// 前缀）
+
+        Returns:
+            True 表示可安全请求。
+        """
+        if not url or not isinstance(url, str):
+            return False
+        http_url = url.replace("webcal://", "https://").strip()
+        try:
+            parsed = urlparse(http_url)
+        except ValueError:
+            return False
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname
+        if not host:
+            return False
+        host_lower = host.lower()
+
+        # 本地/内网主机名黑名单
+        if host_lower in ("localhost", "localhost.localdomain", "broadcasthost"):
+            return False
+        if host_lower.endswith((".local", ".localhost", ".internal", ".home.arpa")):
+            return False
+        if host_lower in (
+            "metadata.google.internal",
+            "metadata.azure.internal",
+            "instance-data",
+            "instance-data.ec2.internal",
+            "169.254.169.254.nip.io",
+        ):
+            return False
+
+        # IP 字面量：直接校验
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return True  # 域名，已过主机名黑名单
+        return not (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        )
+
     async def fetch_webcal_async(self, url: str, days: int = 30) -> list[dict]:
         events = []
         try:
+            # 防 SSRF：WebCal 地址必须为公网 https/http，拒绝内网/本地/云元数据地址
+            if not self._is_safe_webcal_url(url):
+                logger.warning(f"[AppleCalendar] 拒绝不安全的 WebCal 地址: {url}")
+                return events
             http_url = url.replace("webcal://", "https://")
             async with (
                 aiohttp.ClientSession() as session,

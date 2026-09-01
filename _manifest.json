@@ -54,7 +54,7 @@
       "value": "📅"
     }
   },
-  "capabilities": ["send_message", "chat.get_stream_by_user_id", "maisaka.proactive.trigger"],
+  "capabilities": ["send.text", "send.custom", "chat.get_stream_by_user_id", "maisaka.proactive.trigger", "llm.generate", "config.get"],
   "i18n": {
     "default_locale": "zh-CN"
   }

@@ -99,23 +99,26 @@ async def create_schedule(
             time=dt.strftime("%Y-%m-%d %H:%M"),
             context=(description or "").strip(),
         )
-        await plugin.store.add_item(user_id, item)
 
-        # Apple 日历写入（需开启同步且已配置）
+        # Apple 日历写入（需开启同步且已配置）；记录返回的 UID 供删除时回写
         apple_msg = ""
         try:
             if (
                 plugin.config.calendar_sync.enable_apple_calendar_sync
                 and plugin.apple_calendar
             ):
-                await plugin.apple_calendar.create_event(
+                created_uid = await plugin.apple_calendar.create_event(
                     summary=title,
                     start=dt,
                     description=description or "",
                 )
+                if created_uid:
+                    item.apple_uid = created_uid
                 apple_msg = "，已同步到 Apple 日历"
         except Exception as e:
             logger.warning(f"Apple 日历写入失败: {e}")
+
+        await plugin.store.add_item(user_id, item)
 
         return (
             f"已创建日程「{title}」，时间：{dt.strftime('%m-%d %H:%M')} ✅{apple_msg}"
@@ -139,26 +142,47 @@ async def delete_schedule(
         if not user_id:
             return "无法确定用户身份"
 
-        if schedule_id:
-            success = await plugin.store.remove_item(user_id, schedule_id)
-            return "已删除日程 ✅" if success else "未找到指定日程"
-
+        # 先定位要删除的日程（拿 apple_uid 用于回写 Apple 日历）
         schedules_dict = await plugin.store.get_schedules(user_id)
         all_items = schedules_dict.get("schedules", []) + schedules_dict.get(
             "habits", []
         )
-        matches = [s for s in all_items if title_keyword in s.title]
-
-        if not matches:
-            return f"没有找到包含「{title_keyword}」的日程"
-        elif len(matches) == 1:
-            await plugin.store.remove_item(user_id, matches[0].id)
-            return f"已删除日程「{matches[0].title}」✅"
+        target = None
+        if schedule_id:
+            target = next((s for s in all_items if s.id == schedule_id), None)
+            if target is None:
+                return "未找到指定日程"
         else:
-            lines = ["找到多个匹配日程，请提供更具体的信息："]
-            for s in matches:
-                lines.append(f"  [{s.id}] {s.title} @ {s.time}")
-            return "\n".join(lines)
+            matches = [s for s in all_items if title_keyword in s.title]
+            if not matches:
+                return f"没有找到包含「{title_keyword}」的日程"
+            elif len(matches) == 1:
+                target = matches[0]
+            else:
+                lines = ["找到多个匹配日程，请提供更具体的信息："]
+                for s in matches:
+                    lines.append(f"  [{s.id}] {s.title} @ {s.time}")
+                return "\n".join(lines)
+
+        # 删除本地日程
+        removed = await plugin.store.remove_item(user_id, target.id)
+        if not removed:
+            return "未找到指定日程"
+
+        # 回写 Apple 日历（若该日程来自 Apple 且同步开启）
+        apple_msg = ""
+        if (
+            target.apple_uid
+            and plugin.config.calendar_sync.enable_apple_calendar_sync
+            and plugin.apple_calendar
+        ):
+            try:
+                ok = await plugin.apple_calendar.delete_event(target.apple_uid)
+                apple_msg = "，已从 Apple 日历删除" if ok else ""
+            except Exception as e:
+                logger.warning(f"Apple 日历删除回写失败: {e}")
+
+        return f"已删除日程「{target.title}」✅{apple_msg}"
     except Exception as e:
         logger.error(f"删除日程失败: {e}")
         return f"删除日程失败: {e}"
