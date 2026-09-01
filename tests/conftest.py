@@ -17,10 +17,8 @@ if _PLUGIN_DIR not in sys.path:
 
 # 预导入并注册相对导入依赖的兄弟模块
 import constants as _constants_mod
-import markdown as _markdown_mod
 
 _pkg = types.ModuleType("schedule_assistant")
 _pkg.__path__ = [_PLUGIN_DIR]
 sys.modules.setdefault("schedule_assistant", _pkg)
 sys.modules["schedule_assistant.constants"] = _constants_mod
-sys.modules["schedule_assistant.markdown"] = _markdown_mod

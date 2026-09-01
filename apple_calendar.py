@@ -20,6 +20,20 @@ logger = logging.getLogger(__name__)
 __all__ = ["AppleCalendar"]
 
 
+def _escape_ics_text(text: str) -> str:
+    """按 RFC 5545 转义 TEXT 值（反斜杠、分号、逗号、换行）。"""
+    if not text:
+        return ""
+    return (
+        text.replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\r\n", "\\n")
+        .replace("\n", "\\n")
+        .replace("\r", "\\n")
+    )
+
+
 class AppleCalendar:
     """Apple iCloud / CalDAV 日历客户端"""
 
@@ -645,7 +659,22 @@ class AppleCalendar:
         dtstart_fmt = start.strftime("%Y%m%dT%H%M%S")
         dtend_fmt = (end or (start + timedelta(hours=1))).strftime("%Y%m%dT%H%M%S")
         created = datetime.now().strftime("%Y%m%dT%H%M%S")
-        vevent = f"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:{created}\r\nDTSTART;TZID=Asia/Shanghai:{dtstart_fmt}\r\nDTEND;TZID=Asia/Shanghai:{dtend_fmt}\r\nSUMMARY:{summary}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n".encode()
+        lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{created}",
+            f"DTSTART;TZID=Asia/Shanghai:{dtstart_fmt}",
+            f"DTEND;TZID=Asia/Shanghai:{dtend_fmt}",
+            f"SUMMARY:{_escape_ics_text(summary)}",
+        ]
+        esc_desc = _escape_ics_text(description)
+        if esc_desc:
+            lines.append(f"DESCRIPTION:{esc_desc}")
+        lines.append("END:VEVENT")
+        lines.append("END:VCALENDAR")
+        vevent = ("\r\n".join(lines) + "\r\n").encode()
         event_url = f"{cal_url}{uid}.ics"
         resp = await self._async_request(
             event_url,

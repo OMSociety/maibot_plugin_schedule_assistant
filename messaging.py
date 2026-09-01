@@ -147,24 +147,6 @@ class MessagingService:
             )
             return False
 
-    async def send_to_group(self, group_id: str, message: str) -> bool:
-        """向指定群聊发送消息（群聊目标，如群提醒场景）"""
-        try:
-            stream = await self._ctx.ctx.chat.get_stream_by_group_id(
-                str(group_id), platform="qq"
-            )
-            if not stream:
-                self._ctx.ctx.logger.warning(
-                    f"{LOG_PREFIX} 未找到群聊聊天流: group={group_id}"
-                )
-                return False
-            return await self._send_to_stream(stream, message)
-        except Exception as e:
-            self._ctx.ctx.logger.error(
-                f"{LOG_PREFIX} 发送群消息异常: group={group_id} err={e}"
-            )
-            return False
-
     # ============ 兼容接口（MaiBot 版简化/占位） ============
 
     def remember_user_platform(self, user_id: str, platform_id: str) -> None:

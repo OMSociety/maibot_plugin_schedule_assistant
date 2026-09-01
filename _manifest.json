@@ -35,16 +35,6 @@
       "type": "python_package",
       "name": "python-dateutil",
       "version_spec": ">=2.8.0"
-    },
-    {
-      "type": "python_package",
-      "name": "markdown-it-py",
-      "version_spec": ">=3.0.0"
-    },
-    {
-      "type": "python_package",
-      "name": "markdownify",
-      "version_spec": ">=0.11.0"
     }
   ],
   "plugin_type": "tool",
