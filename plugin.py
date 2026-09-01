@@ -184,7 +184,7 @@ class PromptSettingsConfig(PluginConfigBase):
     )
     prompt_schedule: str = Field(
         default="",
-        description="日程提醒模板。占位符：{item_title} {time_label} {ahead_label} {item_context} {conv_history}",
+        description="日程提醒模板。占位符：{item_title} {time_label} {ahead_label} {item_context}",
     )
 
 
@@ -737,13 +737,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             return None
 
     async def _get_user_nickname(self, user_id: str) -> str:
-        try:
-            cached = await self.store.get_user_nickname(user_id)
-            cached = (cached or "").strip()
-            if cached and not cached.isdigit():
-                return cached
-        except Exception:
-            pass
+        """播报称呼：仅用配置 user_nickname，兜底「主人」（MaiBot 无用户昵称记录）"""
         fallback = str(self._flat_config().get("user_nickname", "") or "").strip()
         if fallback and not fallback.isdigit():
             return fallback

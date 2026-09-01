@@ -10,8 +10,6 @@
 SCHEDULES_KEY = "schedules"  # 单次日程列表键名
 HABITS_KEY = "habits"  # 重复习惯列表键名
 WATER_LAST_KEY = "water_last"  # 上次喝水时间键名
-CONVERSATION_MAX_AGE_HOURS = 1  # 对话历史保留时间（小时）
-CONVERSATION_MAX_MESSAGES = 10  # 最多保留消息条数
 
 # ==================== 默认提醒时间 ====================
 DEFAULT_BATH_TIME = "22:00"  # 默认洗澡时间

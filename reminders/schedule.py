@@ -23,7 +23,6 @@ class ScheduleReminder:
     注入信息：
     - 日程名称、时间、备注/描述
     - 提前分钟数
-    - 近期对话上下文
     """
 
     def __init__(self, llm_service, config: dict | None = None):
@@ -36,7 +35,6 @@ class ScheduleReminder:
         item_time: str,
         item_context: str,
         minutes_ahead: int,
-        conv_history: str,
     ) -> str:
         """构建 LLM 提醒 prompt（config 化，默认自然口语模板）"""
 
@@ -51,7 +49,6 @@ class ScheduleReminder:
                 "time_label": time_label,
                 "ahead_label": ahead_label,
                 "item_context": item_context or "",
-                "conv_history": conv_history or "（无近期对话历史）",
             },
         )
 
@@ -85,23 +82,18 @@ class ScheduleReminder:
         item_time: str,
         item_context: str,
         minutes_ahead: int = 10,
-        conv_history: str | None = None,
         user_id: str | None = None,
     ) -> str:
         """生成提醒文本（带 LLM fallback）"""
-
-        conv_str = conv_history or "（无近期对话历史）"
 
         prompt = self._build_prompt(
             item_title=item_title,
             item_time=item_time,
             item_context=item_context,
             minutes_ahead=minutes_ahead,
-            conv_history=conv_str,
         )
 
         try:
-            # prompt 已含 conv_history，不再额外传 history= 避免重复注入
             resp = await self.llm.generate(
                 prompt, umo=user_id, extra_system=BROADCAST_MD_OVERRIDE
             )
@@ -224,19 +216,13 @@ async def check_and_trigger_schedule_reminder(
         if not should_trigger:
             continue
 
-        conv_history = schedule_store.format_history_for_prompt(
-            await schedule_store.get_conversation_history(user_id)
-        )
-
         reminder_text = await reminder.generate_reminder_text(
             item_title=item.title,
             item_time=item.time,
             item_context=item.context,
             minutes_ahead=trigger_minutes,
-            conv_history=conv_history,
             user_id=user_id,
         )
-        # prompt 已含 conv_history，不再额外传 history= 避免重复注入
 
         triggered.append(
             {

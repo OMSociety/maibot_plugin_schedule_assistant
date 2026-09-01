@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from .constants import (
-    CONVERSATION_MAX_AGE_HOURS,
-    CONVERSATION_MAX_MESSAGES,
     HABITS_KEY,
     LOG_PREFIX,
     SCHEDULES_KEY,
@@ -38,14 +36,6 @@ def _habits_key(user_id: str) -> str:
 
 def _water_key(user_id: str) -> str:
     return f"water_last_{user_id}"
-
-
-def _nickname_key(user_id: str) -> str:
-    return f"nickname_{user_id}"
-
-
-def _conversation_key(user_id: str) -> str:
-    return f"conversation_{user_id}"
 
 
 _USERS_KEY = "_users"
@@ -407,15 +397,6 @@ class ScheduleStore:
         await self._save_user_data(user_id, data)
         return stats
 
-    async def get_user_nickname(self, user_id: str) -> str:
-        """读取用户昵称（优先读取存储的昵称）"""
-        return str((await self._get_kv(_nickname_key(user_id), "")).strip())
-
-    async def set_user_nickname(self, user_id: str, nickname: str) -> None:
-        """持久化用户昵称"""
-        value = (nickname or "").strip()
-        await self._set_kv(_nickname_key(user_id), value)
-
     async def clear_expired_overrides(self, user_id: str) -> None:
         """清理过期的临时覆盖"""
         data = await self._load_user_data(user_id)
@@ -428,48 +409,6 @@ class ScheduleStore:
                 changed = True
         if changed:
             await self._save_user_data(user_id, data)
-
-    async def add_conversation_message(
-        self, user_id: str, role: str, content: str
-    ) -> None:
-        """记录用户对话消息"""
-        history = await self._get_kv(_conversation_key(user_id), [])
-        history.append(
-            {"role": role, "content": content, "timestamp": datetime.now().isoformat()}
-        )
-        cutoff = datetime.now() - timedelta(hours=CONVERSATION_MAX_AGE_HOURS)
-        history = [
-            m for m in history if datetime.fromisoformat(m["timestamp"]) > cutoff
-        ]
-        if len(history) > CONVERSATION_MAX_MESSAGES:
-            history = history[-CONVERSATION_MAX_MESSAGES:]
-        await self._set_kv(_conversation_key(user_id), history)
-
-    async def get_conversation_history(self, user_id: str) -> list[dict[str, str]]:
-        """获取用户对话历史"""
-        history = await self._get_kv(_conversation_key(user_id), [])
-        cutoff = datetime.now() - timedelta(hours=CONVERSATION_MAX_AGE_HOURS)
-        return [m for m in history if datetime.fromisoformat(m["timestamp"]) > cutoff]
-
-    def format_history_for_prompt(
-        self, history: list[dict[str, str]], max_tokens: int = 500
-    ) -> str:
-        """将对话历史格式化为 prompt 字符串"""
-        if not history:
-            return "（无近期对话历史）"
-        lines = []
-        total_chars = 0
-        for msg in reversed(history):
-            role_label = "用户" if msg["role"] == "user" else "助手"
-            ts = datetime.fromisoformat(msg["timestamp"]).strftime("%H:%M")
-            line = f"[{ts}] {role_label}: {msg['content']}"
-            line_tokens_est = int(len(line) * 1.5)
-            if total_chars + line_tokens_est > max_tokens * 1.5:
-                break
-            total_chars += len(line)
-            lines.append(line)
-        lines.reverse()
-        return "\n".join(lines) if lines else "（无近期对话历史）"
 
     async def set_user_platform(self, user_id: str, platform_id: str) -> None:
         """持久化用户所属平台（用户真实所在的平台，用于定时消息精确推送）"""
