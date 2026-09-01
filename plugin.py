@@ -69,13 +69,27 @@ class BasicSettingsConfig(PluginConfigBase):
     persona_hint: str = Field(
         default="",
         description="可选语气补充（如：播报时叫用户小名）。人格本体由 MaiBot 全局配置提供",
+        json_schema_extra={
+            "label": "人格补充",
+            "hint": "可选语气补充，如播报时叫用户小名；人格本体由全局配置提供",
+            "placeholder": "例如：叫用户「主人」",
+        },
     )
     user_nickname: str = Field(
-        default="", description="用户昵称（播报称呼，留空用「主人」）"
+        default="",
+        description="用户昵称（播报称呼，留空用「主人」）",
+        json_schema_extra={
+            "label": "用户昵称",
+            "hint": "播报称呼，留空用「主人」",
+        },
     )
     user_ids: list[str] = Field(
         default_factory=list,
         description="接收自动提醒的用户 ID 列表（裸 ID/QQ 号，不带 qq: 前缀，数值等于消息里的 user_info.user_id）",
+        json_schema_extra={
+            "label": "接收提醒的用户",
+            "hint": "裸 ID/QQ 号，不带 qq: 前缀，数值等于消息里的 user_info.user_id",
+        },
     )
 
 
@@ -85,11 +99,22 @@ class ScheduleReminderSettingsConfig(PluginConfigBase):
     __ui_label__ = "日程提醒"
 
     enable_schedule_reminder: bool = Field(
-        default=False, description="开启日程 LLM 智能提醒"
+        default=False,
+        description="开启日程 LLM 智能提醒",
+        json_schema_extra={"label": "开启日程提醒"},
     )
-    schedule_reminder_minutes: int = Field(default=10, description="日程提前提醒分钟数")
+    schedule_reminder_minutes: int = Field(
+        default=10,
+        description="日程提前提醒分钟数",
+        json_schema_extra={"label": "提前提醒（分钟）"},
+    )
     schedule_reminder_check_interval: int = Field(
-        default=5, description="日程提醒扫描间隔（分钟），最小 2"
+        default=5,
+        description="日程提醒扫描间隔（分钟），最小 2",
+        json_schema_extra={
+            "label": "扫描间隔（分钟）",
+            "hint": "最小 2",
+        },
     )
 
 
@@ -98,33 +123,55 @@ class HabitReminderSettingsConfig(PluginConfigBase):
 
     __ui_label__ = "习惯提醒"
 
-    enable_morning_report: bool = Field(default=True, description="开启早安播报")
+    enable_morning_report: bool = Field(
+        default=True,
+        description="开启早安播报",
+        json_schema_extra={"label": "开启早安播报"},
+    )
     morning_report_time: str = Field(
-        default="09:00", description="早安播报时间（HH:MM）"
+        default="09:00",
+        description="早安播报时间（HH:MM）",
+        json_schema_extra={"label": "早安时间", "placeholder": "09:00"},
     )
     enable_bath_reminder: bool = Field(
-        default=True, description="开启洗澡提醒（Maisaka 开口）"
+        default=True,
+        description="开启洗澡提醒（Maisaka 开口）",
+        json_schema_extra={"label": "开启洗澡提醒"},
     )
     bath_time: str = Field(
-        default=DEFAULT_BATH_TIME, description="洗澡提醒时间（HH:MM）"
+        default=DEFAULT_BATH_TIME,
+        description="洗澡提醒时间（HH:MM）",
+        json_schema_extra={"label": "洗澡时间", "placeholder": "HH:MM"},
     )
     enable_sleep_reminder: bool = Field(
-        default=True, description="开启睡觉提醒（Maisaka 开口）"
+        default=True,
+        description="开启睡觉提醒（Maisaka 开口）",
+        json_schema_extra={"label": "开启睡觉提醒"},
     )
     sleep_time: str = Field(
-        default=DEFAULT_SLEEP_TIME, description="睡觉提醒时间（HH:MM）"
+        default=DEFAULT_SLEEP_TIME,
+        description="睡觉提醒时间（HH:MM）",
+        json_schema_extra={"label": "睡觉时间", "placeholder": "HH:MM"},
     )
     enable_water_reminder: bool = Field(
-        default=True, description="开启喝水提醒（Maisaka 开口）"
+        default=True,
+        description="开启喝水提醒（Maisaka 开口）",
+        json_schema_extra={"label": "开启喝水提醒"},
     )
     water_interval: int = Field(
-        default=DEFAULT_WATER_INTERVAL, description="喝水提醒间隔（分钟）"
+        default=DEFAULT_WATER_INTERVAL,
+        description="喝水提醒间隔（分钟）",
+        json_schema_extra={"label": "喝水间隔（分钟）"},
     )
     water_start_time: str = Field(
-        default=DEFAULT_WATER_START, description="喝水提醒开始时间（HH:MM）"
+        default=DEFAULT_WATER_START,
+        description="喝水提醒开始时间（HH:MM）",
+        json_schema_extra={"label": "喝水开始时间", "placeholder": "HH:MM"},
     )
     water_end_time: str = Field(
-        default=DEFAULT_WATER_END, description="喝水提醒结束时间（HH:MM）"
+        default=DEFAULT_WATER_END,
+        description="喝水提醒结束时间（HH:MM）",
+        json_schema_extra={"label": "喝水结束时间", "placeholder": "HH:MM"},
     )
 
 
@@ -134,16 +181,34 @@ class CalendarSyncSettingsConfig(PluginConfigBase):
     __ui_label__ = "日历同步"
 
     enable_apple_calendar_sync: bool = Field(
-        default=False, description="Apple 日历双向同步"
+        default=False,
+        description="Apple 日历双向同步",
+        json_schema_extra={"label": "Apple 日历双向同步"},
     )
     apple_calendar_sync_interval: int = Field(
-        default=30, description="Apple 日历同步间隔（分钟）"
+        default=30,
+        description="Apple 日历同步间隔（分钟）",
+        json_schema_extra={"label": "同步间隔（分钟）"},
     )
-    apple_username: str = Field(default="", description="Apple ID（iCloud 邮箱）")
-    apple_app_password: str = Field(default="", description="App 专用密码")
-    apple_calendar_id: str = Field(default="", description="日历 ID（可留空）")
+    apple_username: str = Field(
+        default="",
+        description="Apple ID（iCloud 邮箱）",
+        json_schema_extra={"label": "Apple ID", "placeholder": "iCloud 邮箱"},
+    )
+    apple_app_password: str = Field(
+        default="",
+        description="App 专用密码",
+        json_schema_extra={"label": "App 专用密码"},
+    )
+    apple_calendar_id: str = Field(
+        default="",
+        description="日历 ID（可留空）",
+        json_schema_extra={"label": "日历 ID", "hint": "可留空"},
+    )
     webcal_urls: list[str] = Field(
-        default_factory=list, description="WebCal 共享日历链接列表"
+        default_factory=list,
+        description="WebCal 共享日历链接列表",
+        json_schema_extra={"label": "WebCal 订阅链接"},
     )
 
 
@@ -152,13 +217,29 @@ class ExternalServicesSettingsConfig(PluginConfigBase):
 
     __ui_label__ = "外部服务"
 
-    maton_api_key: str = Field(default="", description="Notion API Key（Maton 代理）")
+    maton_api_key: str = Field(
+        default="",
+        description="Notion API Key（Maton 代理）",
+        json_schema_extra={"label": "Notion API Key", "hint": "Maton 代理"},
+    )
     notion_db_ids: list[str] = Field(
         default_factory=list,
         description="Notion 数据库 ID 列表（可带 事务:/阅读: 前缀）",
+        json_schema_extra={
+            "label": "Notion 数据库 ID",
+            "hint": "可带 事务:/阅读: 前缀",
+        },
     )
-    weather_api_key: str = Field(default="", description="心知天气 API Key")
-    weather_city: str = Field(default="杭州", description="天气查询城市")
+    weather_api_key: str = Field(
+        default="",
+        description="心知天气 API Key",
+        json_schema_extra={"label": "心知天气 API Key"},
+    )
+    weather_city: str = Field(
+        default="杭州",
+        description="天气查询城市",
+        json_schema_extra={"label": "天气城市"},
+    )
 
 
 class MessageRenderSettingsConfig(PluginConfigBase):
@@ -169,6 +250,10 @@ class MessageRenderSettingsConfig(PluginConfigBase):
     markdown_enabled: bool = Field(
         default=True,
         description="提醒/播报启用 Markdown 渲染（QQ 官方适配器通过 qq_markdown 结构化消息发送）",
+        json_schema_extra={
+            "label": "Markdown 渲染",
+            "hint": "QQ 官方适配器经 qq_markdown 结构化发送",
+        },
     )
 
 
@@ -180,10 +265,20 @@ class PromptSettingsConfig(PluginConfigBase):
     prompt_morning: str = Field(
         default="",
         description="早安播报模板。留空则使用内置默认模板；占位符：{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}",
+        json_schema_extra={
+            "label": "早安播报模板",
+            "hint": "留空用内置默认模板",
+            "placeholder": "{username} {date} {weekday} {weather_current} {agenda}…",
+        },
     )
     prompt_schedule: str = Field(
         default="",
         description="日程提醒模板。留空则使用内置默认模板；占位符：{item_title} {time_label} {ahead_label} {item_context}",
+        json_schema_extra={
+            "label": "日程提醒模板",
+            "hint": "留空用内置默认模板",
+            "placeholder": "{item_title} {time_label} {ahead_label}…",
+        },
     )
 
 
@@ -192,8 +287,16 @@ class PluginBaseConfig(PluginConfigBase):
 
     __ui_label__ = "插件基础设置"
 
-    config_version: str = Field(default="1.0.0", description="配置版本号")
-    enabled: bool = Field(default=True, description="是否启用插件")
+    config_version: str = Field(
+        default="1.0.0",
+        description="配置版本号",
+        json_schema_extra={"label": "配置版本", "disabled": True},
+    )
+    enabled: bool = Field(
+        default=True,
+        description="是否启用插件",
+        json_schema_extra={"label": "启用插件"},
+    )
 
 
 class ScheduleAssistantConfig(PluginConfigBase):
