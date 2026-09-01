@@ -8,7 +8,7 @@
 - 洗澡/睡觉/喝水：Maisaka 自己开口（ctx.maisaka.proactive.trigger，拟人化）
 - 日程 CRUD：4 个 @Tool（LLM 工具）
 - Apple 日历双向同步 / Notion 待办 / 天气：外部服务复用
-- 消息事件：暂未迁移（MaiBot 版不记录昵称/对话历史，日程提醒的「近期对话」恒为空）
+- 消息事件：不做（MaiBot 无官方用户上下文 API，昵称走配置、日程提醒「近期对话」恒为空）
 
 关键差异（相对 AstrBot 版）：
 - 主动推送：user_id → ctx.chat 查聊天流 → ctx.send.custom/text（无 UMO 路由）
