@@ -319,7 +319,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
 
         # 定时调度器
         self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
-        self.timed_engine = TimedMessageEngine(self.messaging, self.scheduler)
+        self.timed_engine = TimedMessageEngine(self, conf, self.messaging, self.scheduler)
 
         # 初始化外部服务与提醒组件
         await self._ensure_services()

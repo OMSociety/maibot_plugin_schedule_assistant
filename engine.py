@@ -185,7 +185,18 @@ class TimedMessageEngine:
     def _add_job(self, name: str, func, trigger, **job_opts):
         options = {"id": name, "replace_existing": True}
         options.update(job_opts)
-        self.scheduler.add_job(func, trigger, **options)
+        # 兼容元组触发 ("interval", {"minutes": N})：拆成 apscheduler 可用的 (trigger_type, **trigger_args)
+        if (
+            isinstance(trigger, tuple)
+            and len(trigger) == 2
+            and isinstance(trigger[0], str)
+        ):
+            trigger_type, trigger_args = trigger
+            if isinstance(trigger_args, dict):
+                options.update(trigger_args)
+            self.scheduler.add_job(func, trigger_type, **options)
+        else:
+            self.scheduler.add_job(func, trigger, **options)
         self._registered_jobs.add(name)
         logger.info(f"{LOG_PREFIX} 定时任务已注册: {name} trigger={trigger}")
 
