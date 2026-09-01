@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from ..constants import BROADCAST_MD_OVERRIDE, LOG_PREFIX
+from ..prompt_config import DEFAULT_PROMPT_SCHEDULE, render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,9 @@ class ScheduleReminder:
     - 近期对话上下文
     """
 
-    def __init__(self, llm_service):
+    def __init__(self, llm_service, config: dict | None = None):
         self.llm = llm_service
+        self.config = config or {}
 
     def _build_prompt(
         self,
@@ -36,30 +38,46 @@ class ScheduleReminder:
         minutes_ahead: int,
         conv_history: str,
     ) -> str:
-        """构建 LLM 提醒 prompt"""
+        """构建 LLM 提醒 prompt（config 化，默认自然口语模板）"""
 
-        prompt = f"""【重要】你的所有回复必须严格遵循系统人格设定。如果系统人格部分为空，则用你默认的对话风格。。
+        time_label = self._format_time_label(item_time)
+        ahead_label = self._format_ahead_label(minutes_ahead)
+        template = self.config.get("prompt_schedule") or DEFAULT_PROMPT_SCHEDULE
 
-有一个日程要开始了，生成提醒文本：
+        return render_prompt(
+            template,
+            {
+                "item_title": item_title,
+                "time_label": time_label,
+                "ahead_label": ahead_label,
+                "item_context": item_context or "",
+                "conv_history": conv_history or "（无近期对话历史）",
+            },
+        )
 
-日程信息：
-  - 名称：{item_title}
-  - 时间：{item_time}
-  - 备注：{item_context or "（无）"}
+    @staticmethod
+    def _format_time_label(item_time: str) -> str:
+        """把 '2026-09-01 14:30' 转成 '14:30'，失败则原样返回"""
+        try:
+            return datetime.strptime(item_time, "%Y-%m-%d %H:%M").strftime("%H:%M")
+        except (ValueError, TypeError):
+            return item_time or ""
 
-
-提前提醒时间：{minutes_ahead} 分钟
-
-近期对话上下文：
-{conv_history}
-
-【要求】
-1. 语气和风格严格遵循系统人格设定
-2. 自然关心用户，语气温柔
-3. 如果备注有具体内容，融入提醒中
-4. 30~80 字以内，不要太长
-"""
-        return prompt.strip()
+    @staticmethod
+    def _format_ahead_label(minutes_ahead: int) -> str:
+        """把提前分钟数转成通顺表述"""
+        try:
+            m = int(minutes_ahead)
+        except (ValueError, TypeError):
+            return "即将"
+        if m <= 0:
+            return "马上开始"
+        if m < 60:
+            return f"{m} 分钟后开始"
+        h, rem = divmod(m, 60)
+        if rem == 0:
+            return f"{h} 小时后开始"
+        return f"{h}小时{rem}分后开始"
 
     async def generate_reminder_text(
         self,

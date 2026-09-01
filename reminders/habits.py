@@ -14,6 +14,12 @@ from ..constants import (
     DEFAULT_WATER_INTERVAL,
     DEFAULT_WATER_START,
 )
+from ..prompt_config import (
+    DEFAULT_PROMPT_BATH,
+    DEFAULT_PROMPT_SLEEP,
+    DEFAULT_PROMPT_WATER,
+    render_prompt,
+)
 
 
 class HabitReminder:
@@ -94,9 +100,17 @@ class HabitReminder:
             "history": history_text or "（无近期对话）",
         }
 
+    # 各子类覆盖：配置键 + 默认模板
+    _prompt_config_key: str = ""
+    _default_prompt: str = ""
+
     def _build_prompt(self, context: dict) -> str:
-        """构建 LLM prompt，子类可覆盖"""
-        raise NotImplementedError
+        """用配置模板（或默认）渲染 prompt"""
+        template = (
+            self.config.get(self._prompt_config_key)
+            or self._default_prompt
+        )
+        return render_prompt(template, context)
 
     async def generate(
         self, username: str, history_text: str, user_id: str | None = None
@@ -126,29 +140,18 @@ class HabitReminder:
 class BathReminder(HabitReminder):
     """洗澡提醒"""
 
+    _prompt_config_key = "prompt_bath"
+    _default_prompt = DEFAULT_PROMPT_BATH
+
     def __init__(self, config: dict, default_user_id: str, llm_service, store):
         super().__init__(config, default_user_id, llm_service, store, "bath")
-
-    def _build_prompt(self, context: dict) -> str:
-        return f"""【重要】你的所有回复必须严格遵循系统人格设定。如果系统人格部分为空，则用你默认的对话风格。
-
-生成一条洗澡时间提醒：
-
-【用户信息】
-- 当前时间: {context["current_time"]}
-- 设定的洗澡时间: {context["default_time"]}
-
-【近期对话】
-{context["history"]}
-
-【要求】
-1. 语气和风格严格遵循系统人格设定
-2. 40字以内，带1-2个emoji
-3. 只输出提醒消息本身"""
 
 
 class SleepReminder(HabitReminder):
     """睡觉提醒（支持深夜超晚模式）"""
+
+    _prompt_config_key = "prompt_sleep"
+    _default_prompt = DEFAULT_PROMPT_SLEEP
 
     def __init__(self, config: dict, default_user_id: str, llm_service, store):
         super().__init__(config, default_user_id, llm_service, store, "sleep")
@@ -166,42 +169,12 @@ class SleepReminder(HabitReminder):
         ctx["is_late"] = self._is_late_hour(now)
         return ctx
 
-    def _build_prompt(self, context: dict) -> str:
-        return f"""【重要】你的所有回复必须严格遵循系统人格设定。如果系统人格部分为空，则用你默认的对话风格。
-
-生成一条睡觉时间提醒：
-
-【用户信息】
-- 当前时间: {context["current_time"]}
-- 设定的睡觉时间: {context["default_time"]}
-- 是否已超晚(23点后): {context.get("is_late", False)}
-
-【要求】
-1. 语气和风格严格遵循系统人格设定
-2. 如果超晚了可以带点小责备，但要符合人格
-3. 40字以内，带1-2个emoji
-4. 只输出提醒消息本身"""
-
 
 class WaterReminder(HabitReminder):
     """喝水提醒"""
 
+    _prompt_config_key = "prompt_water"
+    _default_prompt = DEFAULT_PROMPT_WATER
+
     def __init__(self, config: dict, default_user_id: str, llm_service, store):
         super().__init__(config, default_user_id, llm_service, store, "water")
-
-    def _build_prompt(self, context: dict) -> str:
-        return f"""【重要】你的所有回复必须严格遵循系统人格设定。如果系统人格部分为空，则用你默认的对话风格。
-
-生成一条喝水提醒：
-
-【用户信息】
-- 当前时间: {context["current_time"]}
-
-【近期对话】
-{context["history"]}
-
-【要求】
-1. 语气和风格严格遵循系统人格设定
-2. 结合当前时间和对话上下文
-3. 30字以内，带1-2个emoji
-4. 只输出提醒消息本身"""

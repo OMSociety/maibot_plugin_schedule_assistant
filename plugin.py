@@ -175,6 +175,21 @@ class MessageRenderSettingsConfig(PluginConfigBase):
     )
 
 
+class PromptSettingsConfig(PluginConfigBase):
+    """提醒 Prompt 模板（可定制）"""
+
+    __ui_label__ = "提醒 Prompt 模板"
+
+    prompt_morning: str = Field(
+        default="",
+        description="早安播报模板。占位符：{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}",
+    )
+    prompt_schedule: str = Field(
+        default="",
+        description="日程提醒模板。占位符：{item_title} {time_label} {ahead_label} {item_context} {conv_history}",
+    )
+
+
 class ScheduleAssistantConfig(PluginConfigBase):
     """插件完整配置"""
 
@@ -197,6 +212,9 @@ class ScheduleAssistantConfig(PluginConfigBase):
     )
     message_render: MessageRenderSettingsConfig = Field(
         default_factory=MessageRenderSettingsConfig, description="消息渲染"
+    )
+    prompt_settings: PromptSettingsConfig = Field(
+        default_factory=PromptSettingsConfig, description="提醒 Prompt 模板"
     )
 
 
@@ -267,6 +285,8 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         cfg["weather_api_key"] = c.external_services.weather_api_key
         cfg["weather_city"] = c.external_services.weather_city
         cfg["markdown_enabled"] = c.message_render.markdown_enabled
+        cfg["prompt_morning"] = c.prompt_settings.prompt_morning or ""
+        cfg["prompt_schedule"] = c.prompt_settings.prompt_schedule or ""
         return cfg
 
     # ── 生命周期 ────────────────────────────────────────
@@ -385,7 +405,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 llm_service=self.llm_service,
                 store=self.store,
             )
-            self.schedule_reminder = ScheduleReminder(self.llm_service)
+            self.schedule_reminder = ScheduleReminder(self.llm_service, conf)
 
             if conf.get("enable_apple_calendar_sync"):
                 apple_conf = conf.get("apple_calendar", {})
