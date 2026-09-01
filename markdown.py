@@ -169,7 +169,7 @@ class MarkdownRenderer:
     def __init__(self, config: dict, platform_types: dict[str, str] | None = None):
         self.config = config or {}
         self.enabled = bool(self.config.get("markdown_enabled", False))
-        # 实例ID → 平台类型名 映射（如 {"Flandre": "qq_official"}），
+        # 实例ID → 平台类型名 映射（如 {"bot": "qq_official"}），
         # 由调用方从 platform_manager 动态构建，杜绝硬编码平台实例ID。
         self.platform_types = dict(platform_types or {})
         native_extra = self.config.get("markdown_native_platforms", []) or []

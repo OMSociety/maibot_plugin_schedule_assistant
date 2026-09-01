@@ -104,7 +104,7 @@ class TestMarkdownRenderer:
                 "markdown_native_platforms": native_platforms or [],
                 "qq_markdown_enabled": qq_md,
             },
-            platform_types={"webchat": "webchat", "Flandre": "qq_official"},
+            platform_types={"webchat": "webchat", "bot": "qq_official"},
         )
 
     def test_disabled_returns_raw(self):
@@ -132,14 +132,14 @@ class TestMarkdownRenderer:
     def test_qq_official_native(self):
         """QQ 官方默认 native（直发原生 md）"""
         r = self._renderer()
-        content, kind = r.render(SAMPLE_MD, "Flandre")
+        content, kind = r.render(SAMPLE_MD, "bot")
         assert kind == "native"
         assert "####" in content
 
     def test_qq_official_disabled_fallback(self):
         """qq_markdown_enabled=False → QQ 排版纯文本"""
         r = self._renderer(qq_md=False)
-        content, kind = r.render(SAMPLE_MD, "Flandre")
+        content, kind = r.render(SAMPLE_MD, "bot")
         assert kind == "plain"
         assert "【" in content  # 标题转【】
 
