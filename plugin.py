@@ -188,7 +188,7 @@ class PromptSettingsConfig(PluginConfigBase):
 
 
 class PluginBaseConfig(PluginConfigBase):
-    """插件基础配置（MaiBot 运行时要求的 [plugin] 配置节）"""
+    """插件基础配置"""
 
     __ui_label__ = "插件基础设置"
 
