@@ -8,6 +8,9 @@ from ..constants import LOG_PREFIX
 logger = logging.getLogger(__name__)
 
 _LLM_CIRCUIT_BREAKER_TTL = 300  # 5分钟
+# 生成文本用的模型任务槽（对应 Host 模型类别：replyer/planner/utils/vlm）。
+# 不传时 Host 默认路由到 embedding 类别、不能文本生成（404），故必须显式指定。
+_DEFAULT_LLM_TASK = "replyer"
 
 
 class LLMService:
@@ -106,10 +109,13 @@ class LLMService:
                     prompt=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt},
-                    ]
+                    ],
+                    model=_DEFAULT_LLM_TASK,
                 )
             else:
-                result = await self._ctx.ctx.llm.generate(prompt=prompt)
+                result = await self._ctx.ctx.llm.generate(
+                    prompt=prompt, model=_DEFAULT_LLM_TASK
+                )
             self._llm_failure_time = 0.0  # 成功，重置断路器
             text = (result or {}).get("response") or ""
             return text.strip()
