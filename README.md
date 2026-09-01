@@ -68,6 +68,8 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 ### 第二步：配置
 
 1. **基础设置**：填写 `user_ids`（接收提醒的用户 ID 列表）
+
+> 🔑 **`user_ids` 填什么**：填**裸用户 ID**（不带 `qq:` 前缀），数值等同于 bot 收到消息里的 `user_info.user_id`（QQ 号 / 平台 UID）。它**不是**全局 `operator`/`permission` 那种 `qq:123456789` 格式——`qq:` 前缀是给鉴权名单用的，本插件的平台已固定为 `qq`，只收裸 ID。
 2. **日程提醒**：开启 `enable_schedule_reminder`，设提前量
 3. **习惯提醒**：默认开启，可调时间
 4. **（可选）外部服务**：心知天气 Key（早安播报天气）、Notion、Apple 日历
@@ -86,7 +88,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 |:-----|:-------|:-----|:-------|:-----|
 | 基础设置 | `persona_hint` | string | `""` | 可选语气补充（人格本体由 MaiBot 全局提供） |
 | 基础设置 | `user_nickname` | string | `""` | 播报称呼（留空用「主人」） |
-| 基础设置 | `user_ids` | list | `[]` | 接收提醒的用户 ID |
+| 基础设置 | `user_ids` | list | `[]` | 接收提醒的用户 ID（裸 ID，不带 `qq:` 前缀） |
 | 日程提醒 | `enable_schedule_reminder` | bool | `false` | 开启日程智能提醒 |
 | 日程提醒 | `schedule_reminder_minutes` | int | `10` | 提前提醒分钟数 |
 | 日程提醒 | `schedule_reminder_check_interval` | int | `5` | 扫描间隔（分钟，最小 2） |

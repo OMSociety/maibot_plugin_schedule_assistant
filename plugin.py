@@ -73,9 +73,9 @@ class BasicSettingsConfig(PluginConfigBase):
     user_nickname: str = Field(
         default="", description="用户昵称（播报称呼，留空用「主人」）"
     )
-    user_ids: list = Field(
+    user_ids: list[str] = Field(
         default_factory=list,
-        description="接收自动提醒的用户 ID 列表（QQ 号或平台 UID）",
+        description="接收自动提醒的用户 ID 列表（裸 ID/QQ 号，不带 qq: 前缀，数值等于消息里的 user_info.user_id）",
     )
 
 
@@ -142,7 +142,7 @@ class CalendarSyncSettingsConfig(PluginConfigBase):
     apple_username: str = Field(default="", description="Apple ID（iCloud 邮箱）")
     apple_app_password: str = Field(default="", description="App 专用密码")
     apple_calendar_id: str = Field(default="", description="日历 ID（可留空）")
-    webcal_urls: list = Field(
+    webcal_urls: list[str] = Field(
         default_factory=list, description="WebCal 共享日历链接列表"
     )
 
@@ -153,7 +153,7 @@ class ExternalServicesSettingsConfig(PluginConfigBase):
     __ui_label__ = "外部服务"
 
     maton_api_key: str = Field(default="", description="Notion API Key（Maton 代理）")
-    notion_db_ids: list = Field(
+    notion_db_ids: list[str] = Field(
         default_factory=list,
         description="Notion 数据库 ID 列表（可带 事务:/阅读: 前缀）",
     )
