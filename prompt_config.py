@@ -46,7 +46,7 @@ DEFAULT_PROMPT_MORNING = """【任务】生成一份完整的早安播报，严�
 
 【今日信息】
 日期: {date} {weekday}
-天气: {weather_current}（预报: {weather_forecast if weather_forecast else "暂无"}）
+天气: {weather_current}（预报: {weather_forecast}）
 日程:
 {agenda}
 待办:

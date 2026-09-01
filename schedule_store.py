@@ -460,7 +460,7 @@ class ScheduleStore:
         lines = []
         total_chars = 0
         for msg in reversed(history):
-            role_label = "用户" if msg["role"] == "user" else "芙兰"
+            role_label = "用户" if msg["role"] == "user" else "助手"
             ts = datetime.fromisoformat(msg["timestamp"]).strftime("%H:%M")
             line = f"[{ts}] {role_label}: {msg['content']}"
             line_tokens_est = int(len(line) * 1.5)

@@ -8,7 +8,7 @@
 - 洗澡/睡觉/喝水：Maisaka 自己开口（ctx.maisaka.proactive.trigger，拟人化）
 - 日程 CRUD：4 个 @Tool（LLM 工具）
 - Apple 日历双向同步 / Notion 待办 / 天气：外部服务复用
-- 消息事件：记录用户昵称/对话历史
+- 消息事件：暂未迁移（MaiBot 版不记录昵称/对话历史，日程提醒的「近期对话」恒为空）
 
 关键差异（相对 AstrBot 版）：
 - 主动推送：user_id → ctx.chat 查聊天流 → ctx.send.custom/text（无 UMO 路由）
@@ -56,8 +56,6 @@ from .tools.schedule_tools import (
 )
 
 logger = logging.getLogger(__name__)
-
-SCHEDULE_REMINDER_LOG_THROTTLE_SECONDS = 300  # 5 minutes
 
 
 # ============ 配置模型 ============
@@ -246,7 +244,6 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         self._tasks_registered = False
         self._schedule_reminder_scan_lock = asyncio.Lock()
         self._apple_calendar_sync_lock = asyncio.Lock()
-        self._schedule_reminder_last_log_ts = 0.0
         self._morning_ctx_cache: dict | None = None
         self._morning_ctx_ts = 0.0
 
@@ -654,13 +651,6 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         except asyncio.TimeoutError:
             return
         try:
-            now_ts = time.monotonic()
-            if (
-                now_ts - self._schedule_reminder_last_log_ts
-                >= SCHEDULE_REMINDER_LOG_THROTTLE_SECONDS
-            ):
-                self._schedule_reminder_last_log_ts = now_ts
-
             await self._ensure_services()
             if not self.schedule_reminder or not self.messaging:
                 return

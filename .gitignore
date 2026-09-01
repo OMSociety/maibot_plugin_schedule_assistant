@@ -4,6 +4,6 @@ __pycache__/
 *.log
 .git/
 
-# AstrBot 运行时会在插件目录 data/ 下生成的系统配置与模板（勿提交）
+# MaiBot Runner 运行时生成的插件配置与数据（勿提交）
 data/cmd_config.json
 data/t2i_templates/

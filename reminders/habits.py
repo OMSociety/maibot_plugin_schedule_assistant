@@ -1,6 +1,10 @@
 """
 通用习惯提醒模块
 BathReminder, SleepReminder, WaterReminder 都基于此类
+
+注意（MaiBot 版）：洗澡/睡觉/喝水提醒走 Maisaka 主动开口（ctx.maisaka.proactive.trigger），
+不经过本模块的 LLM 生成路径。本模块当前仅作结构保留（与 AstrBot 版对齐），
+plugin.py 中实例化的 BathReminder/SleepReminder/WaterReminder 暂未被调用。
 """
 
 from datetime import datetime
@@ -106,10 +110,7 @@ class HabitReminder:
 
     def _build_prompt(self, context: dict) -> str:
         """用配置模板（或默认）渲染 prompt"""
-        template = (
-            self.config.get(self._prompt_config_key)
-            or self._default_prompt
-        )
+        template = self.config.get(self._prompt_config_key) or self._default_prompt
         return render_prompt(template, context)
 
     async def generate(
