@@ -101,11 +101,14 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | 习惯提醒 | `water_interval` | int | `90` | 喝水间隔（分钟） |
 | 习惯提醒 | `water_start_time` / `water_end_time` | string | `09:30`/`21:30` | 喝水时段 |
 | 日历同步 | `enable_apple_calendar_sync` | bool | `false` | Apple 日历双向同步 |
+| 日历同步 | `apple_calendar_sync_interval` | int | `30` | 同步间隔（分钟） |
 | 日历同步 | `apple_calendar` | dict | `{}` | username / app_password / calendar_id |
 | 日历同步 | `webcal_urls` | list | `[]` | WebCal 共享链接 |
 | 外部服务 | `maton_api_key` / `notion_db_ids` | string/list | `""`/`[]` | Notion 待办 |
 | 外部服务 | `weather_api_key` / `weather_city` | string | `""`/`杭州` | 心知天气 |
 | 消息渲染 | `markdown_enabled` | bool | `true` | Markdown 渲染（QQ 官方走 qq_markdown 结构化消息） |
+| 提醒 Prompt | `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
+| 提醒 Prompt | `prompt_schedule` | string | `""` | 日程提醒模板。占位符：`{item_title} {time_label} {ahead_label} {item_context}` |
 
 ---
 
