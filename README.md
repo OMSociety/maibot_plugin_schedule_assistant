@@ -101,7 +101,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | 习惯提醒 | `water_start_time` / `water_end_time` | string | `09:30`/`21:30` | 喝水时段 |
 | 日历同步 | `enable_apple_calendar_sync` | bool | `false` | Apple 日历双向同步 |
 | 日历同步 | `apple_calendar_sync_interval` | int | `30` | 同步间隔（分钟） |
-| 日历同步 | `apple_calendar` | dict | `{}` | username / app_password / calendar_id |
+| 日历同步 | `apple_username` / `apple_app_password` / `apple_calendar_id` | string | `""` | Apple ID / App 专用密码 / 日历 ID |
 | 日历同步 | `webcal_urls` | list | `[]` | WebCal 共享链接 |
 | 外部服务 | `maton_api_key` / `notion_db_ids` | string/list | `""`/`[]` | Notion 待办 |
 | 外部服务 | `weather_api_key` / `weather_city` | string | `""`/`杭州` | 心知天气 |
@@ -148,7 +148,7 @@ A：这三类提醒由 Maisaka 拟人化开口（`proactive.trigger`），Maisak
 A：不会。插件通过 `ctx.config.get("personality.*")` 读取 MaiBot 全局人格，播报和日常用同一份人格。
 
 **Q：Apple 日历怎么配？**
-A：需要 Apple ID + **App 专用密码**（appleid.apple.com → 安全性 → App 专用密码），填 `apple_calendar.username / app_password`。
+A：需要 Apple ID + **App 专用密码**（appleid.apple.com → 安全性 → App 专用密码），填 `apple_username / apple_app_password`。
 
 **Q：数据存在哪？**
 A：MaiBot 插件数据目录 `data/plugins/omsociety.schedule-assistant/schedule_data.json`。

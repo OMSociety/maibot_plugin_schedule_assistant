@@ -139,10 +139,9 @@ class CalendarSyncSettingsConfig(PluginConfigBase):
     apple_calendar_sync_interval: int = Field(
         default=30, description="Apple 日历同步间隔（分钟）"
     )
-    apple_calendar: dict = Field(
-        default_factory=dict,
-        description="Apple 日历认证配置（username / app_password / calendar_id）",
-    )
+    apple_username: str = Field(default="", description="Apple ID（iCloud 邮箱）")
+    apple_app_password: str = Field(default="", description="App 专用密码")
+    apple_calendar_id: str = Field(default="", description="日历 ID（可留空）")
     webcal_urls: list = Field(
         default_factory=list, description="WebCal 共享日历链接列表"
     )
@@ -287,7 +286,11 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         cfg["apple_calendar_sync_interval"] = (
             c.calendar_sync.apple_calendar_sync_interval
         )
-        cfg["apple_calendar"] = c.calendar_sync.apple_calendar or {}
+        cfg["apple_calendar"] = {
+            "username": c.calendar_sync.apple_username,
+            "app_password": c.calendar_sync.apple_app_password,
+            "calendar_id": c.calendar_sync.apple_calendar_id,
+        }
         cfg["webcal_urls"] = c.calendar_sync.webcal_urls or []
         cfg["maton_api_key"] = c.external_services.maton_api_key
         cfg["notion_db_ids"] = c.external_services.notion_db_ids or []
