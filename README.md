@@ -152,7 +152,7 @@ A：不会。插件通过 `ctx.config.get("personality.*")` 读取 MaiBot 全局
 A：需要 Apple ID + **App 专用密码**（appleid.apple.com → 安全性 → App 专用密码），填 `apple_calendar.username / app_password`。
 
 **Q：数据存在哪？**
-A：MaiBot 插件数据目录 `data/plugins/github.omsociety.maibot-plugin-schedule-assistant/schedule_data.json`。
+A：MaiBot 插件数据目录 `data/plugins/omsociety.schedule-assistant/schedule_data.json`。
 
 ---
 
