@@ -1,0 +1,6 @@
+# 插件运行依赖（_manifest.json dependencies 已声明，MaiBot 启动自动安装）
+apscheduler>=3.10.0,<4.0.0
+aiohttp>=3.8.0
+python-dateutil>=2.8.0
+markdown-it-py>=3.0.0
+markdownify>=0.11.0

@@ -1,0 +1,12 @@
+# schedule_assistant ruff 配置
+# 豁免说明：
+# - BLE001：插件大量使用有意的兜底捕获（"单点异常不崩溃"是上架硬性要求），
+#   58 处逐条加 noqa 会严重淹没可读性，统一豁免；关键路径的兜底已有日志。
+# - DTZ005 / DTZ007 / DTZ901：插件面向本地时区（Asia/Shanghai）运行，
+#   使用 naive 本地时间（datetime.now()）是既定模式，统一豁免。
+# - S110 / S112：有意的 try-except-pass/continue（工具时间解析失败跳过、
+#   聊天流查询失败降级等），逻辑已带日志或明确注释。
+target-version = "py310"
+
+[lint]
+ignore = ["BLE001", "DTZ005", "DTZ007", "DTZ901", "S110", "S112"]

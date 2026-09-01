@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.git/
+
+# AstrBot 运行时会在插件目录 data/ 下生成的系统配置与模板（勿提交）
+data/cmd_config.json
+data/t2i_templates/

@@ -1,0 +1,8 @@
+# 本地开发/测试依赖
+apscheduler>=3.10.0,<4.0.0
+aiohttp>=3.8.0
+python-dateutil>=2.8.0
+markdown-it-py>=3.0.0
+markdownify>=0.11.0
+pytest>=7.0
+pytest-asyncio>=0.23
