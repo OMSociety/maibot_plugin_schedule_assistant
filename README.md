@@ -141,7 +141,10 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 ## ⚠️ 常见问题
 
 **Q：提醒没收到？**
-A：主动推送需要用户**先私聊过 bot**（才有聊天流）。群聊场景暂不支持主动推送（可后续扩展 `get_stream_by_group_id`）。
+A：主动推送通过 `user_ids`（裸用户 ID）定位你的**私聊流**（插件用 `get_stream_by_user_id` 取到 Session ID 再发送）。所以：
+- `user_ids` 要填**你私聊 bot 的裸用户 ID**（`user_info.user_id`，**不带 `qq:` 前缀**，数值等于消息里的 `user_info.user_id`）；
+- 你**必须先私聊过 bot**（才有聊天流）；
+- 群聊场景暂不支持主动推送（可后续扩展 `get_stream_by_group_id`）。
 
 **Q：为什么洗澡/睡觉/喝水提醒有时没响？**
 A：这三类提醒由 Maisaka 拟人化开口（`proactive.trigger`），Maisaka 会根据人格和语境决定是否说话——**可能选择不打扰**。这是设计取舍；早安播报和日程提醒是固定格式直发，**保证送达**。
