@@ -174,17 +174,17 @@ class MessageRenderSettingsConfig(PluginConfigBase):
 
 
 class PromptSettingsConfig(PluginConfigBase):
-    """提醒 Prompt 模板（可定制）"""
+    """提醒 Prompt 模板"""
 
     __ui_label__ = "提醒 Prompt 模板"
 
     prompt_morning: str = Field(
         default="",
-        description="早安播报模板。占位符：{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}",
+        description="早安播报模板。留空则使用内置默认模板；占位符：{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}",
     )
     prompt_schedule: str = Field(
         default="",
-        description="日程提醒模板。占位符：{item_title} {time_label} {ahead_label} {item_context}",
+        description="日程提醒模板。留空则使用内置默认模板；占位符：{item_title} {time_label} {ahead_label} {item_context}",
     )
 
 
