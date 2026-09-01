@@ -23,6 +23,22 @@ COMMON_SESSION_TYPES = (
 )
 
 
+def extract_stream_id(stream: Any) -> str:
+    """从 get_stream_by_user_id 返回的 stream 中提取 stream_id。
+
+    MaiBot 的 get_stream_by_user_id 返回的是 dict（字段 session_id/stream_id），
+    不是带 .stream_id 属性的对象；用属性访问会抛 AttributeError，导致发送静默失败。
+    兼容 dict 与对象两种形态。
+    """
+    if not stream:
+        return ""
+    if isinstance(stream, dict):
+        return str(stream.get("session_id") or stream.get("stream_id") or "")
+    return str(
+        getattr(stream, "stream_id", "") or getattr(stream, "session_id", "") or ""
+    )
+
+
 class MessagingService:
     """消息发送服务（MaiBot 版：user_id → 聊天流 → ctx.send）"""
 
@@ -89,21 +105,27 @@ class MessagingService:
 
     async def _send_to_stream(self, stream, text: str) -> bool:
         """向聊天流发送文本（markdown 优先，降级纯文本）"""
+        stream_id = extract_stream_id(stream)
+        if not stream_id:
+            self._ctx.ctx.logger.warning(
+                f"{LOG_PREFIX} 无法从聊天流解析 stream_id，跳过发送"
+            )
+            return False
         try:
             if self._enabled_markdown():
                 ok = await self._ctx.ctx.send.custom(
                     "qq_markdown",
                     {"markdown": {"content": text}},
-                    stream.stream_id,
+                    stream_id,
                 )
                 if ok:
                     return True
                 # 降级纯文本
-                return bool(await self._ctx.ctx.send.text(text, stream.stream_id))
-            return bool(await self._ctx.ctx.send.text(text, stream.stream_id))
+                return bool(await self._ctx.ctx.send.text(text, stream_id))
+            return bool(await self._ctx.ctx.send.text(text, stream_id))
         except Exception as e:
             self._ctx.ctx.logger.warning(
-                f"{LOG_PREFIX} 发送失败 stream={stream.stream_id} err={e}"
+                f"{LOG_PREFIX} 发送失败 stream={stream_id} err={e}"
             )
             return False
 

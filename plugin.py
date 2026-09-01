@@ -39,7 +39,7 @@ from .constants import (
     SCHEDULES_KEY,
 )
 from .engine import TimedMessageEngine
-from .messaging import MessagingService
+from .messaging import MessagingService, extract_stream_id
 from .notion_client import NotionClient
 from .reminders.briefing import BriefingReminder
 from .reminders.habits import BathReminder, SleepReminder, WaterReminder
@@ -698,7 +698,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             }
             try:
                 await self.ctx.maisaka.proactive.trigger(
-                    stream_id=stream.stream_id,
+                    stream_id=extract_stream_id(stream),
                     intent=intents.get(habit_type, "定时提醒"),
                     reason=reasons.get(habit_type, "habit_reminder"),
                     metadata={"source": "schedule_assistant", "habit": habit_type},
@@ -752,7 +752,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             }
             try:
                 await self.ctx.maisaka.proactive.trigger(
-                    stream_id=stream.stream_id,
+                    stream_id=extract_stream_id(stream),
                     intent=intents.get(habit_type, "定时提醒"),
                     reason=reasons.get(habit_type, "habit_reminder"),
                     metadata={"source": "schedule_assistant", "habit": habit_type},
