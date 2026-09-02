@@ -159,9 +159,6 @@ A：主动推送通过 `user_ids`（`platform:裸ID`）定位你的**私聊流**
 **Q：为什么洗澡/睡觉/喝水提醒有时没响？**
 A：这三类提醒由 Maisaka 拟人化开口（`proactive.trigger`），Maisaka 会根据人格和语境决定是否说话——**可能选择不打扰**。这是设计取舍；早安播报和日程提醒是固定格式直发，**保证送达**。
 
-**Q：播报语气和麦麦日常不一样？**
-A：不会。插件通过 `ctx.config.get("personality.*")` 读取 MaiBot 全局人格，播报和日常用同一份人格。
-
 **Q：Apple 日历怎么配？**
 A：需要 Apple ID + **App 专用密码**（appleid.apple.com → 安全性 → App 专用密码），填 `apple_username / apple_app_password`。
 
