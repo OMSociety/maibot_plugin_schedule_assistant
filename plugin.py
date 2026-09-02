@@ -85,20 +85,11 @@ class BasicSettingsConfig(PluginConfigBase):
     )
     user_ids: list[str] = Field(
         default_factory=list,
-        description="接收自动提醒的用户，每项为 platform:裸ID（如 qq:123456）；也可写裸 ID，沿用下方 platform 作默认平台",
+        description="接收自动提醒的用户，每项为 platform:裸ID（如 qq:123456）",
         json_schema_extra={
             "label": "接收提醒的用户",
-            "hint": "每项 `platform:裸ID`，如 qq:123456；裸 ID 则用下方 platform 默认平台",
+            "hint": "每项 `platform:裸ID`，如 qq:123456（operator 同款格式）",
             "placeholder": "qq:123456",
-        },
-    )
-    platform: str = Field(
-        default="qq",
-        description="默认平台名（user_ids 里裸 ID 时使用；qq=QQ 官方/NapCat，接其它适配器填它上报的平台名）",
-        json_schema_extra={
-            "label": "默认平台",
-            "hint": "user_ids 里写裸 ID 时用它；推荐直接写 platform:id",
-            "placeholder": "qq",
         },
     )
 
@@ -380,7 +371,6 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         cfg["persona_hint"] = c.basic.persona_hint
         cfg["user_nickname"] = c.basic.user_nickname
         cfg["user_ids"] = c.basic.user_ids or []
-        cfg["platform"] = c.basic.platform or "qq"
         cfg["enable_schedule_reminder"] = c.schedule_reminder.enable_schedule_reminder
         cfg["schedule_reminder_minutes"] = c.schedule_reminder.schedule_reminder_minutes
         cfg["schedule_reminder_check_interval"] = (
@@ -856,11 +846,8 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
     # ── 辅助 ───────────────────────────────────────────
 
     async def _get_user_stream(self, user_id: str):
-        """按用户 ID 查聊天流（用户需私聊过 bot）；user_id 支持 platform:id，裸 ID 用 platform 配置）"""
-        platform, uid = parse_user_target(
-            user_id,
-            self.config.basic.platform if self.config and self.config.basic else "qq",
-        )
+        """按用户 ID 查聊天流（用户需私聊过 bot）；user_id 支持 platform:id，裸 ID 默认 qq）"""
+        platform, uid = parse_user_target(user_id)
         try:
             return await self.ctx.chat.get_stream_by_user_id(
                 str(uid), platform=platform

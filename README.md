@@ -67,7 +67,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 1. **基础设置**：填写 `user_ids`（接收提醒的用户 ID 列表）
 
-> 🔑 **`user_ids` 填什么**：每项填 **`platform:裸ID`**，和全局 `operator`/`permission` 同一种格式（如 `qq:123456`）。`qq`=QQ 官方/NapCat；接其它适配器填它上报的平台名。也兼容**裸 ID**（如 `123456`），此时用下方 `platform` 作为默认平台——推荐直接写 `platform:ID`，自包含、可混平台。
+> 🔑 **`user_ids` 填什么**：每项填 **`platform:裸ID`**，和全局 `operator`/`permission` 同一种格式（如 `qq:123456`）。`qq`=QQ 官方/NapCat；接其它适配器填它上报的平台名。自包含、可混平台。
 2. **日程提醒**：开启 `enable_schedule_reminder`，设提前量
 3. **习惯提醒**：默认开启，可调时间
 4. **（可选）外部服务**：心知天气 Key（早安播报天气）、Notion、Apple 日历
@@ -86,8 +86,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 |:-----|:-------|:-----|:-------|:-----|
 | 基础设置 | `persona_hint` | string | `""` | 可选语气补充（人格本体由 MaiBot 全局提供） |
 | 基础设置 | `user_nickname` | string | `""` | 播报称呼（留空用「主人」） |
-| 基础设置 | `user_ids` | list | `[]` | 接收提醒的用户（每项 `platform:裸ID`，如 `qq:123456`；裸 ID 用下面 platform 默认平台） |
-| 基础设置 | `platform` | string | `"qq"` | 默认平台（`user_ids` 里写裸 ID 时用；`qq`=QQ 官方/NapCat，接其它适配器填它上报的平台名） |
+| 基础设置 | `user_ids` | list | `[]` | 接收提醒的用户（每项 `platform:裸ID`，如 `qq:123456`） |
 | 日程提醒 | `enable_schedule_reminder` | bool | `false` | 开启日程智能提醒 |
 | 日程提醒 | `schedule_reminder_minutes` | int | `10` | 提前提醒分钟数 |
 | 日程提醒 | `schedule_reminder_check_interval` | int | `5` | 扫描间隔（分钟，最小 2） |
@@ -139,7 +138,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 **Q：提醒没收到？**
 A：主动推送通过 `user_ids`（`platform:裸ID`）定位你的**私聊流**（插件用 `get_stream_by_user_id` 取到 Session ID 再发送）。所以：
-- `user_ids` 填 `platform:裸ID`（如 `qq:123456`，`qq`=QQ 官方/NapCat；裸 ID 则用下面 `platform` 默认平台）；
+- `user_ids` 填 `platform:裸ID`（如 `qq:123456`，`qq`=QQ 官方/NapCat）；
 - 你**必须先私聊过 bot**（才有聊天流）；
 - 群聊场景暂不支持主动推送（可后续扩展 `get_stream_by_group_id`）。
 

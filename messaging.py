@@ -168,9 +168,7 @@ class MessagingService:
             bool: 是否发送成功
         """
         try:
-            platform, user_id = parse_user_target(
-                user_id, self.config.get("platform", "qq")
-            )
+            platform, user_id = parse_user_target(user_id)
             stream = await self._ctx.ctx.chat.get_stream_by_user_id(
                 str(user_id), platform=platform
             )
