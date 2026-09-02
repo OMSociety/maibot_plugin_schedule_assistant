@@ -113,8 +113,6 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 > 💡 **WebCal 订阅安全**：`webcal_urls` 只接受公网 `https://` 订阅地址（`webcal://` 自动转 `https://`）。插件会拒绝 `localhost`、内网（如 `192.168.x` / `10.x`）、云元数据（`169.254.169.254`）等地址（防 SSRF）。请勿填写内网或本机地址。
 
---
-
 ## 🛠️ LLM 可调用工具
 
 | 工具 | 说明 | 关键参数 |
