@@ -138,7 +138,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 ## ⚠️ 常见问题
 
 **Q：提醒没收到？**
-A：主动推送通过 `user_ids`（裸用户 ID）定位你的**私聊流**（插件用 `get_stream_by_user_id` 取到 Session ID 再发送）。所以：
+A：主动推送通过 `user_ids`（`platform:裸ID`）定位你的**私聊流**（插件用 `get_stream_by_user_id` 取到 Session ID 再发送）。所以：
 - `user_ids` 填 `platform:裸ID`（如 `qq:123456`，`qq`=QQ 官方/NapCat；裸 ID 则用下面 `platform` 默认平台）；
 - 你**必须先私聊过 bot**（才有聊天流）；
 - 群聊场景暂不支持主动推送（可后续扩展 `get_stream_by_group_id`）。
