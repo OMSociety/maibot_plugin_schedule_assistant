@@ -220,8 +220,14 @@ class ExternalServicesSettingsConfig(PluginConfigBase):
 
     maton_api_key: str = Field(
         default="",
-        description="Notion API Key（Maton 代理）",
-        json_schema_extra={"label": "Notion API Key", "hint": "Maton 代理"},
+        description=(
+            "Maton API Key（第三方网关）。此密钥会作为 Bearer 头发送给第三方 "
+            "gateway.maton.ai，而非直连 Notion 官方 API；详见 README「数据安全与隐私」"
+        ),
+        json_schema_extra={
+            "label": "Maton API Key（第三方网关）",
+            "hint": "发往 gateway.maton.ai，非 Notion 官方直连",
+        },
     )
     notion_db_ids: list[str] = Field(
         default_factory=list,

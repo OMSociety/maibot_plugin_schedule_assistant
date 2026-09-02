@@ -5,5 +5,7 @@ __pycache__/
 .git/
 
 # MaiBot Runner 运行时生成的插件配置与数据（勿提交）
+# config.toml 内含明文密钥（Apple 专用密码 / Notion Key / 天气 Key），切勿提交
+/config.toml
 data/cmd_config.json
 data/t2i_templates/

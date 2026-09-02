@@ -29,7 +29,7 @@
 | 🚿 **习惯提醒** | 洗澡 / 睡觉 / 喝水，由 Maisaka 基于人格**拟人化开口** |
 | 🗓️ **日程管理** | LLM 自然语言创建 / 删除 / 查询 / 修改日程（明天9点、后天下午3点都能懂） |
 | 🔄 **Apple 日历同步** | iCloud CalDAV 双向同步（读取 / 写入 / 删除事件） |
-| 📋 **Notion 待办** | 待办同步进早安播报（Maton 代理） |
+| 📋 **Notion 待办** | 待办同步进早安播报（经第三方 Maton 网关中转） |
 
 ---
 
@@ -103,13 +103,37 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | 日历同步 | `apple_calendar_sync_interval` | int | `30` | 同步间隔（分钟） |
 | 日历同步 | `apple_username` / `apple_app_password` / `apple_calendar_id` | string | `""` | Apple ID / App 专用密码 / 日历 ID |
 | 日历同步 | `webcal_urls` | list | `[]` | WebCal 共享链接 |
-| 外部服务 | `maton_api_key` / `notion_db_ids` | string/list | `""`/`[]` | Notion 待办 |
+| 外部服务 | `maton_api_key` / `notion_db_ids` | string/list | `""`/`[]` | Notion 待办（经第三方 Maton 网关，密钥发往该第三方） |
 | 外部服务 | `weather_api_key` / `weather_city` | string | `""`/`杭州` | 心知天气 |
 | 消息渲染 | `markdown_enabled` | bool | `true` | Markdown 渲染（QQ 协议适配器走 qq_markdown 结构化消息） |
 | 提醒 Prompt | `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
 | 提醒 Prompt | `prompt_schedule` | string | `""` | 日程提醒模板。占位符：`{item_title} {time_label} {ahead_label} {item_context}` |
 
 > 💡 **WebCal 订阅安全**：`webcal_urls` 只接受公网 `https://` 订阅地址（`webcal://` 自动转 `https://`）。插件会拒绝 `localhost`、内网（如 `192.168.x` / `10.x`）、云元数据（`169.254.169.254`）等地址（防 SSRF）。请勿填写内网或本机地址。
+
+---
+
+## 🔒 数据安全与隐私
+
+### Notion 待办经第三方 Maton 网关中转（非直连）
+
+本插件的 Notion 待办功能**默认通过第三方服务 [Maton](https://maton.ai) 的网关 `gateway.maton.ai` 中转**，**并非直连 Notion 官方 API**：
+
+- 你在「外部服务 → Maton API Key」里填的 `maton_api_key`，会被作为 `Authorization: Bearer <key>` 头发送给 `gateway.maton.ai`（第三方服务器），而不是 `api.notion.com`；
+- 也就是说，**这个 Key（及其对应的 Notion 访问权限）会离开你的机器，交给 Maton 这个第三方**；
+- 因此，Maton 能访问插件为拉取待办而查询的数据：你配置的「事务」「阅读」数据库里的**标题、状态（进度）、截止日期**等字段内容。
+
+> ⚠️ 如果你对把 Notion 访问交给第三方有顾虑，请**不要**填写 `maton_api_key` —— 日程创建 / 提醒等功能完全不依赖 Notion，留空即可正常使用。
+
+### 密钥明文存储提示
+
+以下配置项会**以明文**写入 MaiBot 运行时生成的 `config.toml`（位于插件目录下）：
+
+- Apple 日历的 `apple_app_password`（App 专用密码）
+- Notion 的 `maton_api_key`
+- 心知天气的 `weather_api_key`
+
+请妥善保管这份 `config.toml`：本仓库 `.gitignore` 已排除 `/config.toml`，请勿将其提交到 Git、分享截图或粘贴到日志中。
 
 ## 🛠️ LLM 可调用工具
 
