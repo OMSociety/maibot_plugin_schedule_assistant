@@ -115,7 +115,9 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 ### WebCal 订阅地址安全（防 SSRF）
 
-> 💡 `webcal_urls` 只接受公网 `https://` 订阅地址（`webcal://` 自动转 `https://`）。插件会拒绝 `localhost`、内网（如 `192.168.x` / `10.x`）、云元数据（`169.254.169.254`）等地址（防 SSRF）。请勿填写内网或本机地址。
+> 💡 `webcal_urls` 只接受**公网**的 `http://` 或 `https://` 订阅地址（`webcal://` 自动转 `https://`）。插件会拒绝 `localhost`、内网（如 `192.168.x` / `10.x`）、链路本地、云元数据（`169.254.169.254`）等地址（防 SSRF）。请勿填写内网或本机地址。
+>
+> ⚠️ 安全边界：对**域名**仅做主机名黑名单校验，**请求前不解析 DNS**，因此理论上仍存在 DNS rebinding（域名在校验通过后被解析到内网地址）的残余风险；对 **IP 字面量**则会完整校验私网 / 环回 / 链路本地 / 保留段。若部署环境对安全要求较高，建议在网络层（防火墙 / 出站代理白名单）再挡一道。
 
 ### Notion 待办经第三方 Maton 网关中转（非直连）
 
