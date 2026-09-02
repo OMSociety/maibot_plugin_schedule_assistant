@@ -39,6 +39,26 @@ def extract_stream_id(stream: Any) -> str:
     )
 
 
+def parse_user_target(target: Any, default_platform: str = "qq") -> tuple[str, str]:
+    """解析 user_ids 每一项，返回 (平台名, 裸用户ID)。
+
+    支持两种写法（同全局 operator/permission 的 `platform:id`）：
+    - ``qq:123456``（自包含，推荐；`:` 前是平台名）
+    - ``123456``（裸 ID，沿用 `default_platform` 作为平台，兜底旧配置）
+    平台/ID 内一般不含 `:`（QQ openid 十六进制、QQ 号数字、telegram 数字），
+    按**第一个** `:` 切分即可。
+    """
+    t = str(target or "").strip()
+    if not t:
+        return str(default_platform or "qq"), ""
+    if ":" in t:
+        platform, user_id = t.split(":", 1)
+        return (str(platform).strip() or str(default_platform or "qq")), str(
+            user_id
+        ).strip()
+    return str(default_platform or "qq"), t
+
+
 class MessagingService:
     """消息发送服务（MaiBot 版：user_id → 聊天流 → ctx.send）"""
 
@@ -148,8 +168,11 @@ class MessagingService:
             bool: 是否发送成功
         """
         try:
+            platform, user_id = parse_user_target(
+                user_id, self.config.get("platform", "qq")
+            )
             stream = await self._ctx.ctx.chat.get_stream_by_user_id(
-                str(user_id), platform=self.config.get("platform", "qq")
+                str(user_id), platform=platform
             )
             if not stream:
                 self._ctx.ctx.logger.warning(

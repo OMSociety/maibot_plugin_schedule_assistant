@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from dateutil import parser as date_parser
 from dateutil.relativedelta import relativedelta
 
+from ..messaging import parse_user_target
 from ..schedule_store import ScheduleItem
 
 logger = logging.getLogger(__name__)
@@ -26,10 +27,11 @@ def _extract_user_id(plugin, message: dict | None) -> str:
         uid = user_info.get("user_id") or ""
         if uid:
             return str(uid)
-    # 兜底：配置的默认用户
+    # 兜底：配置的默认用户（可能为 platform:id，取裸 ID 作存储键）
     try:
         if plugin.config and plugin.config.basic and plugin.config.basic.user_ids:
-            return str(plugin.config.basic.user_ids[0])
+            _, uid = parse_user_target(plugin.config.basic.user_ids[0], "qq")
+            return uid
     except Exception:
         pass
     return ""

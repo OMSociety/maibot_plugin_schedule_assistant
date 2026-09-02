@@ -39,7 +39,7 @@ from .constants import (
     SCHEDULES_KEY,
 )
 from .engine import TimedMessageEngine
-from .messaging import MessagingService, extract_stream_id
+from .messaging import MessagingService, extract_stream_id, parse_user_target
 from .notion_client import NotionClient
 from .reminders.briefing import BriefingReminder
 from .reminders.habits import BathReminder, SleepReminder, WaterReminder
@@ -85,18 +85,19 @@ class BasicSettingsConfig(PluginConfigBase):
     )
     user_ids: list[str] = Field(
         default_factory=list,
-        description="接收自动提醒的用户 ID 列表（裸 ID/QQ 号，不带 qq: 前缀，数值等于消息里的 user_info.user_id）",
+        description="接收自动提醒的用户，每项为 platform:裸ID（如 qq:123456）；也可写裸 ID，沿用下方 platform 作默认平台",
         json_schema_extra={
             "label": "接收提醒的用户",
-            "hint": "裸 ID/QQ 号，不带 qq: 前缀，数值等于消息里的 user_info.user_id",
+            "hint": "每项 `platform:裸ID`，如 qq:123456；裸 ID 则用下方 platform 默认平台",
+            "placeholder": "qq:123456",
         },
     )
     platform: str = Field(
         default="qq",
-        description="主动推送所在平台名（qq=QQ 官方/NapCat；接其它适配器填它的平台名）",
+        description="默认平台名（user_ids 里裸 ID 时使用；qq=QQ 官方/NapCat，接其它适配器填它上报的平台名）",
         json_schema_extra={
-            "label": "私聊平台",
-            "hint": "默认 qq；换其它适配器填它上报的平台名",
+            "label": "默认平台",
+            "hint": "user_ids 里写裸 ID 时用它；推荐直接写 platform:id",
             "placeholder": "qq",
         },
     )
@@ -855,13 +856,14 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
     # ── 辅助 ───────────────────────────────────────────
 
     async def _get_user_stream(self, user_id: str):
-        """按用户 ID 查聊天流（用户需私聊过 bot）"""
-        platform = (
-            self.config.basic.platform if self.config and self.config.basic else "qq"
-        ) or "qq"
+        """按用户 ID 查聊天流（用户需私聊过 bot）；user_id 支持 platform:id，裸 ID 用 platform 配置）"""
+        platform, uid = parse_user_target(
+            user_id,
+            self.config.basic.platform if self.config and self.config.basic else "qq",
+        )
         try:
             return await self.ctx.chat.get_stream_by_user_id(
-                str(user_id), platform=platform
+                str(uid), platform=platform
             )
         except Exception as e:
             self.ctx.logger.debug(f"{LOG_PREFIX} 查聊天流失败 user={user_id}: {e}")
