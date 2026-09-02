@@ -67,7 +67,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 1. **基础设置**：填写 `user_ids`（接收提醒的用户 ID 列表）
 
-> 🔑 **`user_ids` 填什么**：每项填 **`platform:裸ID`**，和全局 `operator`/`permission` 同一种格式（如 `qq:123456`）。`qq`=QQ 官方/NapCat；接其它适配器填它上报的平台名。自包含、可混平台。
+> 🔑 **`user_ids` 填什么**：每项填 **`platform:裸ID`**，和全局 `operator`/`permission` 同一种格式（如 `qq:123456`）。`qq`=NapCat（QQ 协议）；接其它适配器填它上报的平台名。自包含、可混平台。
 2. **日程提醒**：开启 `enable_schedule_reminder`，设提前量
 3. **习惯提醒**：默认开启，可调时间
 4. **（可选）外部服务**：心知天气 Key（早安播报天气）、Notion、Apple 日历
@@ -105,7 +105,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | 日历同步 | `webcal_urls` | list | `[]` | WebCal 共享链接 |
 | 外部服务 | `maton_api_key` / `notion_db_ids` | string/list | `""`/`[]` | Notion 待办 |
 | 外部服务 | `weather_api_key` / `weather_city` | string | `""`/`杭州` | 心知天气 |
-| 消息渲染 | `markdown_enabled` | bool | `true` | Markdown 渲染（QQ 官方走 qq_markdown 结构化消息） |
+| 消息渲染 | `markdown_enabled` | bool | `true` | Markdown 渲染（QQ 协议适配器走 qq_markdown 结构化消息） |
 | 提醒 Prompt | `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
 | 提醒 Prompt | `prompt_schedule` | string | `""` | 日程提醒模板。占位符：`{item_title} {time_label} {ahead_label} {item_context}` |
 
@@ -138,7 +138,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 **Q：提醒没收到？**
 A：主动推送通过 `user_ids`（`platform:裸ID`）定位你的**私聊流**（插件用 `get_stream_by_user_id` 取到 Session ID 再发送）。所以：
-- `user_ids` 填 `platform:裸ID`（如 `qq:123456`，`qq`=QQ 官方/NapCat）；
+- `user_ids` 填 `platform:裸ID`（如 `qq:123456`，`qq`=NapCat）；
 - 你**必须先私聊过 bot**（才有聊天流）；
 - 群聊场景暂不支持主动推送（可后续扩展 `get_stream_by_group_id`）。
 
