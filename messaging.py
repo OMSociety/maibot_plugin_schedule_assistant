@@ -149,7 +149,7 @@ class MessagingService:
         """
         try:
             stream = await self._ctx.ctx.chat.get_stream_by_user_id(
-                str(user_id), platform="qq"
+                str(user_id), platform=self.config.get("platform", "qq")
             )
             if not stream:
                 self._ctx.ctx.logger.warning(

@@ -91,6 +91,15 @@ class BasicSettingsConfig(PluginConfigBase):
             "hint": "裸 ID/QQ 号，不带 qq: 前缀，数值等于消息里的 user_info.user_id",
         },
     )
+    platform: str = Field(
+        default="qq",
+        description="主动推送所在平台名（qq=QQ 官方/NapCat；接其它适配器填它的平台名）",
+        json_schema_extra={
+            "label": "私聊平台",
+            "hint": "默认 qq；换其它适配器填它上报的平台名",
+            "placeholder": "qq",
+        },
+    )
 
 
 class ScheduleReminderSettingsConfig(PluginConfigBase):
@@ -370,6 +379,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         cfg["persona_hint"] = c.basic.persona_hint
         cfg["user_nickname"] = c.basic.user_nickname
         cfg["user_ids"] = c.basic.user_ids or []
+        cfg["platform"] = c.basic.platform or "qq"
         cfg["enable_schedule_reminder"] = c.schedule_reminder.enable_schedule_reminder
         cfg["schedule_reminder_minutes"] = c.schedule_reminder.schedule_reminder_minutes
         cfg["schedule_reminder_check_interval"] = (
@@ -846,9 +856,12 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
 
     async def _get_user_stream(self, user_id: str):
         """按用户 ID 查聊天流（用户需私聊过 bot）"""
+        platform = (
+            self.config.basic.platform if self.config and self.config.basic else "qq"
+        ) or "qq"
         try:
             return await self.ctx.chat.get_stream_by_user_id(
-                str(user_id), platform="qq"
+                str(user_id), platform=platform
             )
         except Exception as e:
             self.ctx.logger.debug(f"{LOG_PREFIX} 查聊天流失败 user={user_id}: {e}")
