@@ -3,7 +3,7 @@
   "id": "omsociety.schedule-assistant",
   "version": "1.0.0",
   "name": "日程提醒助手",
-  "description": "你的贴心日程管家，支持早安播报、习惯提醒、LLM 智能日程管理、Apple 日历双向同步、Notion 待办同步",
+  "description": "贴心日程管家，支持早安播报、习惯提醒、LLM 智能日程管理、Apple 日历双向同步、Notion 待办同步",
   "author": {
     "name": "OMSociety",
     "url": "https://github.com/OMSociety"
