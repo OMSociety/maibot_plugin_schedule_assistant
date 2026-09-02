@@ -63,8 +63,6 @@
 git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plugins/maibot_plugin_schedule_assistant
 ```
 
-> 💡 插件依赖（apscheduler / aiohttp / python-dateutil）在 `_manifest.json` 中声明，MaiBot 启动时自动安装。
-
 ### 第二步：配置
 
 1. **基础设置**：填写 `user_ids`（接收提醒的用户 ID 列表）
