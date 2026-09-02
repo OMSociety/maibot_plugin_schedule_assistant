@@ -109,11 +109,13 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | 提醒 Prompt | `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
 | 提醒 Prompt | `prompt_schedule` | string | `""` | 日程提醒模板。占位符：`{item_title} {time_label} {ahead_label} {item_context}` |
 
-> 💡 **WebCal 订阅安全**：`webcal_urls` 只接受公网 `https://` 订阅地址（`webcal://` 自动转 `https://`）。插件会拒绝 `localhost`、内网（如 `192.168.x` / `10.x`）、云元数据（`169.254.169.254`）等地址（防 SSRF）。请勿填写内网或本机地址。
-
 ---
 
 ## 🔒 数据安全与隐私
+
+### WebCal 订阅地址安全（防 SSRF）
+
+> 💡 `webcal_urls` 只接受公网 `https://` 订阅地址（`webcal://` 自动转 `https://`）。插件会拒绝 `localhost`、内网（如 `192.168.x` / `10.x`）、云元数据（`169.254.169.254`）等地址（防 SSRF）。请勿填写内网或本机地址。
 
 ### Notion 待办经第三方 Maton 网关中转（非直连）
 
@@ -122,18 +124,6 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 - 你在「外部服务 → Maton API Key」里填的 `maton_api_key`，会被作为 `Authorization: Bearer <key>` 头发送给 `gateway.maton.ai`（第三方服务器），而不是 `api.notion.com`；
 - 也就是说，**这个 Key（及其对应的 Notion 访问权限）会离开你的机器，交给 Maton 这个第三方**；
 - 因此，Maton 能访问插件为拉取待办而查询的数据：你配置的「事务」「阅读」数据库里的**标题、状态（进度）、截止日期**等字段内容。
-
-> ⚠️ 如果你对把 Notion 访问交给第三方有顾虑，请**不要**填写 `maton_api_key` —— 日程创建 / 提醒等功能完全不依赖 Notion，留空即可正常使用。
-
-### 密钥明文存储提示
-
-以下配置项会**以明文**写入 MaiBot 运行时生成的 `config.toml`（位于插件目录下）：
-
-- Apple 日历的 `apple_app_password`（App 专用密码）
-- Notion 的 `maton_api_key`
-- 心知天气的 `weather_api_key`
-
-请妥善保管这份 `config.toml`：本仓库 `.gitignore` 已排除 `/config.toml`，请勿将其提交到 Git、分享截图或粘贴到日志中。
 
 ## 🛠️ LLM 可调用工具
 
