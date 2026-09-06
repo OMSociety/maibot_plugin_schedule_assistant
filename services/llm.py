@@ -30,14 +30,9 @@ class LLMService:
         """
         self._ctx = ctx
         self.config = config or {}
-        self._fallback_template = ""
         # 实例级断路器：记录最近一次失败时间，熔断期内直接返回 fallback
         self._llm_failure_time = 0.0
         self._persona_cache: tuple[str, float] | None = None  # (text, ts)
-
-    def set_fallback_template(self, template: str):
-        """设置 LLM 失败时的 fallback 模板文案"""
-        self._fallback_template = template
 
     async def _get_persona_prompt(self) -> str:
         """读取 MaiBot 全局人格（[personality] 三字段），带 60s 缓存
@@ -73,6 +68,7 @@ class LLMService:
         history: str = "",
         umo: str | None = None,
         extra_system: str = "",
+        fallback: str = "",
     ) -> str:
         """生成 LLM 回复
 
@@ -82,6 +78,7 @@ class LLMService:
             history: 近期对话历史，拼到 system 末尾
             umo: 兼容保留（MaiBot 版不使用）
             extra_system: 追加到 system_prompt 末尾的补充指令（如播报格式特例）
+            fallback: LLM 不可用/失败时返回的兜底文案，由调用方按场景显式传入
 
         Returns:
             LLM 生成的文本
@@ -101,7 +98,7 @@ class LLMService:
                 f"{LOG_PREFIX} LLM 处于熔断期（上次失败于 "
                 f"{time.time() - self._llm_failure_time:.0f} 秒前），跳过调用"
             )
-            return self._fallback_template or ""
+            return fallback
 
         try:
             if system_prompt:
@@ -122,7 +119,7 @@ class LLMService:
         except Exception as e:
             logger.error(f"{LOG_PREFIX} LLM 生成失败: {e}")
             self._llm_failure_time = time.time()
-            if self._fallback_template:
-                logger.warning(f"{LOG_PREFIX} LLM 失败，使用 fallback 模板")
-                return self._fallback_template
+            if fallback:
+                logger.warning(f"{LOG_PREFIX} LLM 失败，使用 fallback 文案")
+                return fallback
             return ""

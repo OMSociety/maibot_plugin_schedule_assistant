@@ -66,7 +66,6 @@ class MessagingService:
         self,
         ctx,
         config: dict,
-        platform_lookup=None,
         users_lookup=None,
         default_user_id: str | None = None,
     ):
@@ -74,7 +73,6 @@ class MessagingService:
         Args:
             ctx: MaiBot 插件实例（提供 self.ctx.chat / self.ctx.send / self.ctx.logger）
             config: 插件配置
-            platform_lookup: 兼容保留（MaiBot 版不使用，平台由聊天流自带）
             users_lookup: 可选异步回调 () -> list[str]，返回所有已知用户ID
             default_user_id: 可选默认目标用户ID
         """
@@ -82,19 +80,42 @@ class MessagingService:
         self.config = config
         self._users_lookup = users_lookup
         self._default_user_id = str(default_user_id) if default_user_id else None
+        # 配置 user_ids 的 platform:id 项登记到这里（裸ID → 平台），
+        # 存储/业务一律用裸 ID 作键，发送时按此还原平台。
+        # 注意必须遍历配置原始值（platform:id），归一化后平台信息就丢了
+        self._platform_by_user: dict[str, str] = {}
+        for uid in config.get("user_ids", []) or []:
+            if not uid:
+                continue
+            platform, bare = parse_user_target(uid)
+            if bare:
+                self._platform_by_user.setdefault(bare, platform)
 
     # ============ 目标用户解析（保留原接口） ============
 
     @staticmethod
     def _collect_config_target_ids(config: dict) -> list[str]:
-        """读取目标用户名单配置（user_ids 列表）"""
+        """读取目标用户名单配置（user_ids 列表），归一化为裸用户 ID。
+
+        裸 ID 是与 @Tool 写入路径一致的存储键；平台前缀由
+        _platform_by_user 保留、发送时还原。
+        """
         raw = config.get("user_ids", []) or []
-        return [str(uid) for uid in raw if uid]
+        ids = []
+        for uid in raw:
+            if not uid:
+                continue
+            _, bare = parse_user_target(uid)
+            if bare:
+                ids.append(bare)
+        return ids
 
     async def resolve_target_users(
         self, include_known_users: bool = False
     ) -> list[str]:
         """解析目标用户ID列表（配置 user_ids + 默认用户 + 已知用户，去重排序）
+
+        返回裸用户 ID（存储键统一口径）。
 
         Args:
             include_known_users: 是否包含存储中的全部已知用户
@@ -107,12 +128,17 @@ class MessagingService:
         for uid in self._collect_config_target_ids(self.config):
             user_ids.add(str(uid))
         if self._default_user_id:
-            user_ids.add(str(self._default_user_id))
+            _, bare = parse_user_target(self._default_user_id)
+            if bare:
+                user_ids.add(bare)
         if include_known_users and self._users_lookup:
             try:
                 for uid in await self._users_lookup():
-                    if uid:
-                        user_ids.add(str(uid))
+                    if not uid:
+                        continue
+                    _, bare = parse_user_target(uid)
+                    if bare:
+                        user_ids.add(bare)
             except Exception as e:
                 self._ctx.ctx.logger.warning(f"{LOG_PREFIX} 读取已知用户失败: err={e}")
         return sorted(user_ids)
@@ -123,25 +149,41 @@ class MessagingService:
         """是否启用 markdown 渲染（config markdown_enabled）"""
         return bool(self.config.get("markdown_enabled", True))
 
-    async def _send_to_stream(self, stream, text: str) -> bool:
-        """向聊天流发送文本（markdown 优先，降级纯文本）"""
+    async def _send_to_stream(self, stream, text: str, markdown: bool | None) -> bool:
+        """向聊天流发送文本（markdown 优先，降级纯文本）
+
+        Args:
+            markdown: None 跟随配置；True/False 显式指定本次行为
+        """
         stream_id = extract_stream_id(stream)
         if not stream_id:
             self._ctx.ctx.logger.warning(
                 f"{LOG_PREFIX} 无法从聊天流解析 stream_id，跳过发送"
             )
             return False
-        try:
-            if self._enabled_markdown():
-                ok = await self._ctx.ctx.send.custom(
-                    "qq_markdown",
-                    {"markdown": {"content": text}},
-                    stream_id,
-                )
-                if ok:
-                    return True
-                # 降级纯文本
+        use_md = self._enabled_markdown() if markdown is None else markdown
+        if not use_md:
+            try:
                 return bool(await self._ctx.ctx.send.text(text, stream_id))
+            except Exception as e:
+                self._ctx.ctx.logger.warning(
+                    f"{LOG_PREFIX} 发送失败 stream={stream_id} err={e}"
+                )
+                return False
+        try:
+            ok = await self._ctx.ctx.send.custom(
+                "qq_markdown",
+                {"markdown": {"content": text}},
+                stream_id,
+            )
+            if ok:
+                return True
+        except Exception as e:
+            # custom 抛异常与返回 falsy 一样走纯文本降级
+            self._ctx.ctx.logger.debug(
+                f"{LOG_PREFIX} markdown 发送异常，降级纯文本 stream={stream_id} err={e}"
+            )
+        try:
             return bool(await self._ctx.ctx.send.text(text, stream_id))
         except Exception as e:
             self._ctx.ctx.logger.warning(
@@ -159,7 +201,7 @@ class MessagingService:
         """向指定用户发送私聊消息（user_id → 聊天流 → 发送）
 
         Args:
-            user_id: 目标用户ID（QQ OpenID / 数字 QQ 号）
+            user_id: 目标用户ID（裸 ID，或 platform:id 格式——后者优先取平台）
             message: 要发送的消息文本
             platform_id: 兼容保留（MaiBot 版不使用）
             markdown: 是否启用 markdown，None 时跟随配置
@@ -169,6 +211,8 @@ class MessagingService:
         """
         try:
             platform, user_id = parse_user_target(user_id)
+            # 配置里登记过平台映射的（qq:123456 写法），按登记还原
+            platform = self._platform_by_user.get(user_id, platform)
             stream = await self._ctx.ctx.chat.get_stream_by_user_id(
                 str(user_id), platform=platform
             )
@@ -177,24 +221,9 @@ class MessagingService:
                     f"{LOG_PREFIX} 未找到用户聊天流: user={user_id}（用户可能未私聊过 bot）"
                 )
                 return False
-            if markdown is not None:
-                old = self.config.get("markdown_enabled", True)
-                self.config["markdown_enabled"] = markdown
-                ok = await self._send_to_stream(stream, message)
-                self.config["markdown_enabled"] = old
-                return ok
-            return await self._send_to_stream(stream, message)
+            return await self._send_to_stream(stream, message, markdown)
         except Exception as e:
             self._ctx.ctx.logger.error(
                 f"{LOG_PREFIX} 发送消息异常: user={user_id} err={e}"
             )
             return False
-
-    # ============ 兼容接口（MaiBot 版简化/占位） ============
-
-    def remember_user_platform(self, user_id: str, platform_id: str) -> None:
-        """兼容保留（MaiBot 版无平台记忆需求，静默）"""
-
-    def _extract_platform_id_from_event(self, event: Any) -> str | None:
-        """兼容保留：MaiBot 消息事件无平台 ID 概念，返回 None"""
-        return None

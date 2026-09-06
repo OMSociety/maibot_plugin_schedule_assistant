@@ -210,12 +210,6 @@ class TimedMessageEngine:
             logger.debug(f"{LOG_PREFIX} 移除任务失败（可能不存在）: {name} err={e}")
         self._registered_jobs.discard(name)
 
-    def has_job(self, name: str) -> bool:
-        return name in self._registered_jobs
-
-    def registered_jobs(self) -> list[str]:
-        return sorted(self._registered_jobs)
-
     def start(self) -> None:
         if not self.scheduler.running:
             self.scheduler.start()

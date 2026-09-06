@@ -42,7 +42,6 @@ from .engine import TimedMessageEngine
 from .messaging import MessagingService, extract_stream_id, parse_user_target
 from .notion_client import NotionClient
 from .reminders.briefing import BriefingReminder
-from .reminders.habits import BathReminder, SleepReminder, WaterReminder
 from .reminders.schedule import ScheduleReminder, check_and_trigger_schedule_reminder
 from .schedule_store import ScheduleItem, ScheduleStore
 from .services.llm import LLMService
@@ -356,9 +355,6 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         self.notion_service: NotionService | None = None
         self.apple_calendar: AppleCalendar | None = None
         self.briefing_reminder: BriefingReminder | None = None
-        self.bath_reminder: BathReminder | None = None
-        self.sleep_reminder: SleepReminder | None = None
-        self.water_reminder: WaterReminder | None = None
         self.schedule_reminder: ScheduleReminder | None = None
         self._services_ready = False
         self._services_init_lock = asyncio.Lock()
@@ -432,7 +428,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
 
         # 定时调度器
         self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
-        self.timed_engine = TimedMessageEngine(self, conf, self.messaging, self.scheduler)
+        self.timed_engine = TimedMessageEngine(
+            self, conf, self.messaging, self.scheduler
+        )
 
         # 初始化外部服务与提醒组件
         await self._ensure_services()
@@ -457,7 +455,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
     ) -> None:
         if scope != "self":
             return
-        self.ctx.logger.info(f"{LOG_PREFIX} 配置已更新（热重载生效于下次重启调度）")
+        # 每轮 tick 重新 _flat_config() 的开关/阈值类配置即刻生效；
+        # 调度时间/开关与各服务持有的 conf 快照需重载插件（重启调度）才生效
+        self.ctx.logger.info(f"{LOG_PREFIX} 配置已更新（调度时间类改动需重载插件生效）")
 
     # ── 服务初始化 ──────────────────────────────────────
 
@@ -509,24 +509,6 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                     self.notion_service = None
 
             self.briefing_reminder = BriefingReminder(conf, self, self.llm_service)
-            self.bath_reminder = BathReminder(
-                conf,
-                default_user_id=None,
-                llm_service=self.llm_service,
-                store=self.store,
-            )
-            self.sleep_reminder = SleepReminder(
-                conf,
-                default_user_id=None,
-                llm_service=self.llm_service,
-                store=self.store,
-            )
-            self.water_reminder = WaterReminder(
-                conf,
-                default_user_id=None,
-                llm_service=self.llm_service,
-                store=self.store,
-            )
             self.schedule_reminder = ScheduleReminder(self.llm_service, conf)
 
             if conf.get("enable_apple_calendar_sync"):
@@ -685,35 +667,42 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
 
     # ── 洗澡/睡觉/喝水：Maisaka 自己开口 ──────────────
 
+    _MAISAKA_INTENTS = {
+        "bath": "洗澡时间到了，自然地提醒用户去洗澡",
+        "sleep": "该睡觉了，温柔地提醒用户早点休息",
+        "water": "提醒用户喝口水休息一下",
+    }
+    _MAISAKA_REASONS = {
+        "bath": "bath_reminder",
+        "sleep": "sleep_reminder",
+        "water": "water_reminder",
+    }
+
+    async def _trigger_maisaka(self, habit_type: str, user_id: str) -> bool:
+        """对单个用户触发 Maisaka 主动开口，返回是否成功"""
+        stream = await self._get_user_stream(user_id)
+        if not stream:
+            return False
+        try:
+            await self.ctx.maisaka.proactive.trigger(
+                stream_id=extract_stream_id(stream),
+                intent=self._MAISAKA_INTENTS.get(habit_type, "定时提醒"),
+                reason=self._MAISAKA_REASONS.get(habit_type, "habit_reminder"),
+                metadata={"source": "schedule_assistant", "habit": habit_type},
+            )
+            return True
+        except Exception as e:
+            self.ctx.logger.warning(
+                f"{LOG_PREFIX} Maisaka {habit_type} 提醒触发失败 user={user_id}: {e}"
+            )
+            return False
+
     def _maisaka_habit_provider(self, habit_type: str):
         """构造 Maisaka 主动提醒 provider（定时引擎调用，触发 Maisaka 开口）"""
 
         async def provider(user_id: str, shared: Any = None) -> str | None:
             """返回 None（不直发）；实际通过 Maisaka proactive 触发"""
-            stream = await self._get_user_stream(user_id)
-            if not stream:
-                return None
-            intents = {
-                "bath": "洗澡时间到了，自然地提醒用户去洗澡",
-                "sleep": "该睡觉了，温柔地提醒用户早点休息",
-                "water": "提醒用户喝口水休息一下",
-            }
-            reasons = {
-                "bath": "bath_reminder",
-                "sleep": "sleep_reminder",
-                "water": "water_reminder",
-            }
-            try:
-                await self.ctx.maisaka.proactive.trigger(
-                    stream_id=extract_stream_id(stream),
-                    intent=intents.get(habit_type, "定时提醒"),
-                    reason=reasons.get(habit_type, "habit_reminder"),
-                    metadata={"source": "schedule_assistant", "habit": habit_type},
-                )
-            except Exception as e:
-                self.ctx.logger.warning(
-                    f"{LOG_PREFIX} Maisaka {habit_type} 提醒触发失败: {e}"
-                )
+            await self._trigger_maisaka(habit_type, user_id)
             return None  # 不直发
 
         return provider
@@ -744,28 +733,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         for user_id in await self.messaging.resolve_target_users(
             include_known_users=True
         ):
-            stream = await self._get_user_stream(user_id)
-            if not stream:
-                continue
-            intents = {
-                "bath": "洗澡时间到了，自然地提醒用户去洗澡",
-                "sleep": "该睡觉了，温柔地提醒用户早点休息",
-                "water": "提醒用户喝口水休息一下",
-            }
-            reasons = {
-                "bath": "bath_reminder",
-                "sleep": "sleep_reminder",
-                "water": "water_reminder",
-            }
-            try:
-                await self.ctx.maisaka.proactive.trigger(
-                    stream_id=extract_stream_id(stream),
-                    intent=intents.get(habit_type, "定时提醒"),
-                    reason=reasons.get(habit_type, "habit_reminder"),
-                    metadata={"source": "schedule_assistant", "habit": habit_type},
-                )
-            except Exception as e:
-                self.ctx.logger.warning(f"{LOG_PREFIX} Maisaka 提醒触发失败: {e}")
+            await self._trigger_maisaka(habit_type, user_id)
 
     # ── 日程提醒扫描（固定格式直发）────────────────────
 
@@ -781,12 +749,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 return
 
             conf = self._flat_config()
-            try:
-                minutes_ahead = max(
-                    1, int(conf.get("schedule_reminder_minutes", 10) or 10)
-                )
-            except (ValueError, TypeError):
-                minutes_ahead = 10
+            minutes_ahead = max(1, int(conf.get("schedule_reminder_minutes", 10) or 10))
 
             for user_id in await self.messaging.resolve_target_users(
                 include_known_users=True
@@ -796,7 +759,6 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                         schedule_store=self.store,
                         llm_service=self.llm_service,
                         user_id=user_id,
-                        minutes_window=minutes_ahead,
                         minutes_before=minutes_ahead,
                         reminder=self.schedule_reminder,
                     )

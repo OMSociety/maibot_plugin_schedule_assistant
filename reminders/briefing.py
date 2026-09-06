@@ -27,7 +27,6 @@ class BriefingReminder:
             if agenda and agenda not in ("暂无", "获取失败")
             else []
         )
-        _nl = chr(10)  # newline char for f-string
         notion_lines = (
             [ln.strip() for ln in notion_todos.split("\n") if ln.strip()]
             if notion_todos and notion_todos not in ("暂无", "获取失败")
@@ -50,8 +49,8 @@ class BriefingReminder:
                 "weekday": weekday,
                 "weather_current": weather_current,
                 "weather_forecast": weather_forecast or "暂无",
-                "agenda": _nl.join(agenda_lines) if agenda_lines else "暂无",
-                "notion_todos": _nl.join(notion_lines) if notion_lines else "暂无",
+                "agenda": "\n".join(agenda_lines) if agenda_lines else "暂无",
+                "notion_todos": "\n".join(notion_lines) if notion_lines else "暂无",
                 "late_night": late_night_section,
             },
         )

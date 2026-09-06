@@ -16,7 +16,7 @@ if _PLUGIN_DIR not in sys.path:
     sys.path.insert(0, _PLUGIN_DIR)
 
 # 预导入并注册相对导入依赖的兄弟模块
-import constants as _constants_mod
+import constants as _constants_mod  # noqa: E402 - 必须在 sys.path 注入之后导入
 
 _pkg = types.ModuleType("schedule_assistant")
 _pkg.__path__ = [_PLUGIN_DIR]

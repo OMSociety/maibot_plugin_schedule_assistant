@@ -20,10 +20,22 @@ from .constants import (
     SCHEDULES_KEY,
     WATER_LAST_KEY,
 )
+from .messaging import parse_user_target
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["ScheduleItem", "ScheduleStore"]
+
+
+def _bare_user_id(user_id: str) -> str:
+    """把用户标识归一化为裸 ID（存储键统一口径）。
+
+    历史上定时路径用配置原值（qq:123456）做键，而 @Tool 写入路径经
+    parse_user_target 取裸 ID，导致同一用户两套键、早安播报读不到
+    工具创建的日程。现在所有存取统一取裸 ID，平台前缀在发送侧还原。
+    """
+    _, bare = parse_user_target(user_id)
+    return bare or str(user_id or "").strip()
 
 
 def _schedules_key(user_id: str) -> str:
@@ -96,6 +108,7 @@ class ScheduleStore:
     def __init__(self):
         self._data_dir: Path | None = None
         self._cache: dict[str, tuple[Any, float]] = {}
+        self._migrated = False
         logger.info(f"{LOG_PREFIX} ScheduleStore 初始化完成")
 
     def set_data_dir(self, data_dir: str | Path) -> None:
@@ -110,16 +123,59 @@ class ScheduleStore:
         return self._data_dir / "schedule_data.json"
 
     async def _load_all(self) -> dict[str, Any]:
-        """读取整个 JSON 数据文件（不存在返回空 dict）"""
+        """读取整个 JSON 数据文件（不存在返回空 dict），首次加载时迁移旧键"""
         try:
             raw = self._db_path.read_text(encoding="utf-8")
             data = json.loads(raw)
-            return data if isinstance(data, dict) else {}
+            data = data if isinstance(data, dict) else {}
         except FileNotFoundError:
             return {}
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"{LOG_PREFIX} 数据文件读取失败，按空数据继续: {e}")
             return {}
+        if not self._migrated:
+            self._migrated = True
+            if self._migrate_legacy_keys(data):
+                await self._save_all(data)
+        return data
+
+    @staticmethod
+    def _migrate_legacy_keys(data: dict[str, Any]) -> bool:
+        """把旧版 platform:id 形式的存储键迁移为裸 ID 键（原地修改）。
+
+        旧版本定时路径以配置原值（如 qq:123456）做键，与 @Tool 写入的
+        裸 ID 键并存；统一到裸 ID 后重命名旧键，避免既有数据失联。
+
+        Returns:
+            bool: 数据是否有变更（需要写回）
+        """
+        changed = False
+        for prefix in ("schedules_", "habits_", "water_last_", "user_platform_"):
+            for key in [
+                k
+                for k in data
+                if isinstance(k, str)
+                and k.startswith(prefix)
+                and ":" in k[len(prefix) :]
+            ]:
+                bare = key[len(prefix) :].split(":", 1)[1].strip()
+                if bare:
+                    new_key = prefix + bare
+                    if new_key not in data:
+                        data[new_key] = data[key]
+                del data[key]
+                changed = True
+        users = data.get(_USERS_KEY)
+        if isinstance(users, list):
+            new_users: list[str] = []
+            for u in users:
+                bare = _bare_user_id(str(u))
+                if bare and bare not in new_users:
+                    new_users.append(bare)
+            if new_users != [str(u) for u in users]:
+                changed = True
+            data[_USERS_KEY] = new_users
+        return changed
 
     async def _save_all(self, data: dict[str, Any]) -> None:
         """整体写回 JSON 数据文件"""
@@ -169,6 +225,7 @@ class ScheduleStore:
 
     async def _load_user_data(self, user_id: str) -> dict[str, Any]:
         """向后兼容：从旧版统一 data 键迁移数据"""
+        user_id = _bare_user_id(user_id)
         data: dict[str, Any] = {
             SCHEDULES_KEY: [],
             HABITS_KEY: [],
@@ -186,6 +243,7 @@ class ScheduleStore:
         return data
 
     async def _save_user_data(self, user_id: str, data: dict[str, Any]) -> None:
+        user_id = _bare_user_id(user_id)
         await self._set_kv(_schedules_key(user_id), data.get(SCHEDULES_KEY, []))
         await self._set_kv(_habits_key(user_id), data.get(HABITS_KEY, []))
         await self._set_kv(_water_key(user_id), data.get(WATER_LAST_KEY, ""))
@@ -249,65 +307,6 @@ class ScheduleStore:
                     await self._save_user_data(user_id, data)
                     return True
         return False
-
-    async def snooze_item(self, user_id: str, item_id: str, minutes: int) -> bool:
-        new_time = (datetime.now() + timedelta(minutes=minutes)).strftime(
-            "%Y-%m-%d %H:%M"
-        )
-        data = await self._load_user_data(user_id)
-        found = False
-        for key in [SCHEDULES_KEY, HABITS_KEY]:
-            for item in data.get(key, []):
-                if item.get("id") == item_id:
-                    item["snoozed_until"] = new_time
-                    found = True
-        if found:
-            await self._save_user_data(user_id, data)
-        return found
-
-    async def enable_item(self, user_id: str, item_id: str, enabled: bool) -> bool:
-        data = await self._load_user_data(user_id)
-        found = False
-        for key in [SCHEDULES_KEY, HABITS_KEY]:
-            for item in data.get(key, []):
-                if item.get("id") == item_id:
-                    item["enabled"] = enabled
-                    found = True
-        if found:
-            await self._save_user_data(user_id, data)
-        return found
-
-    async def get_water_last(self, user_id: str) -> str:
-        return await self._get_kv(_water_key(user_id), "")
-
-    async def set_water_last(self, user_id: str, ts: str) -> None:
-        await self._set_kv(_water_key(user_id), ts)
-
-    async def set_temp_override(
-        self, user_id: str, habit_title: str, new_time: str
-    ) -> bool:
-        data = await self._load_user_data(user_id)
-        today = datetime.now().strftime("%Y-%m-%d")
-        found = False
-        for habit in data.get(HABITS_KEY, []):
-            if habit.get("title") == habit_title:
-                habit["temp_override"] = f"{today} {new_time}"
-                found = True
-        if found:
-            await self._save_user_data(user_id, data)
-        return found
-
-    async def get_effective_time(
-        self, user_id: str, habit_title: str, default_time: str
-    ) -> str:
-        data = await self._load_user_data(user_id)
-        today = datetime.now().strftime("%Y-%m-%d")
-        for habit in data.get(HABITS_KEY, []):
-            if habit.get("title") == habit_title:
-                temp = habit.get("temp_override", "")
-                if temp and temp.startswith(today):
-                    return temp.split(" ")[1] if " " in temp else default_time
-        return default_time
 
     async def sync_from_apple_calendar(
         self, user_id: str, apple_events: list[dict]
@@ -409,11 +408,3 @@ class ScheduleStore:
                 changed = True
         if changed:
             await self._save_user_data(user_id, data)
-
-    async def set_user_platform(self, user_id: str, platform_id: str) -> None:
-        """持久化用户所属平台（用户真实所在的平台，用于定时消息精确推送）"""
-        await self._set_kv(f"user_platform_{user_id}", str(platform_id or "").strip())
-
-    async def get_user_platform(self, user_id: str) -> str:
-        """读取用户所属平台，未记录时返回空字符串"""
-        return str((await self._get_kv(f"user_platform_{user_id}", "")).strip())
