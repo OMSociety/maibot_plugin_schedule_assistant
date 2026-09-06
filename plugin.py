@@ -470,7 +470,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             conf = self._flat_config()
 
             api_key = conf.get("weather_api_key")
-            city = conf.get("weather_city", "杭州")
+            city = conf.get("weather_city", "北京")
             if api_key:
                 self.weather_service = WeatherService(
                     {"weather_api_key": api_key, "weather_city": city}
