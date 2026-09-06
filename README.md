@@ -104,7 +104,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | 日历同步 | `apple_username` / `apple_app_password` / `apple_calendar_id` | string | `""` | Apple ID / App 专用密码 / 日历 ID |
 | 日历同步 | `webcal_urls` | list | `[]` | WebCal 共享链接 |
 | 外部服务 | `maton_api_key` / `notion_db_ids` | string/list | `""`/`[]` | Notion 待办（经第三方 Maton 网关，密钥发往该第三方） |
-| 外部服务 | `weather_api_key` / `weather_city` | string | `""`/`杭州` | 心知天气 |
+| 外部服务 | `weather_api_key` / `weather_city` | string | `""`/`北京` | 心知天气 |
 | 消息渲染 | `markdown_enabled` | bool | `true` | Markdown 渲染（QQ 协议适配器走 qq_markdown 结构化消息） |
 | 提醒 Prompt | `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
 | 提醒 Prompt | `prompt_schedule` | string | `""` | 日程提醒模板。占位符：`{item_title} {time_label} {ahead_label} {item_context}` |

@@ -242,7 +242,7 @@ class ExternalServicesSettingsConfig(PluginConfigBase):
         json_schema_extra={"label": "心知天气 API Key"},
     )
     weather_city: str = Field(
-        default="杭州",
+        default="北京",
         description="天气查询城市",
         json_schema_extra={"label": "天气城市"},
     )

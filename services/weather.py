@@ -9,7 +9,7 @@ import aiohttp
 class WeatherService:
     def __init__(self, config: dict):
         self.weather_api_key = config.get("weather_api_key", "")
-        self.weather_city = config.get("weather_city", "杭州")
+        self.weather_city = config.get("weather_city", "北京")
         self._cache: dict = {"data": ("", ""), "timestamp": 0}
         self._CACHE_TTL = 1800
 

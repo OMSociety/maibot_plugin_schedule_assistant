@@ -342,6 +342,8 @@ class ScheduleStore:
                 continue
 
             apple_uids.add(uid)
+            # 无论走哪个分支都视为已处理，重复实例在下一轮循环被拦下
+            processed_uids_this_sync.add(uid)
             start_str = evt.get("start", "")
             if not start_str:
                 continue
@@ -384,7 +386,6 @@ class ScheduleStore:
                     ).to_dict()
                 )
                 stats["added"] += 1
-                processed_uids_this_sync.add(uid)
         before_count = len(schedules)
         schedules = [
             s
