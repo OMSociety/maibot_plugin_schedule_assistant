@@ -5,6 +5,7 @@ ScheduleStore 底层是注入目录下的 JSON 文件，全部逻辑不依赖 SD
 """
 
 import asyncio
+from datetime import datetime, timedelta
 
 from schedule_assistant.schedule_store import (
     ScheduleItem,
@@ -150,7 +151,10 @@ class TestStoreRoundTrip:
 class TestSyncFromAppleCalendar:
     """Apple 日历同步：重复 UID 去重且不误删、空列表不删除"""
 
-    def _evt(self, uid, title="事件", start="2026-09-10T10:00:00"):
+    # 事件时间必须动态生成：写死日期会随时间推移落入「过期日程」过滤线之外
+    _future_start = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%dT10:00:00")
+
+    def _evt(self, uid, title="事件", start=_future_start):
         return {"uid": uid, "summary": title, "start": start}
 
     def test_empty_events_no_deletion(self, tmp_path):

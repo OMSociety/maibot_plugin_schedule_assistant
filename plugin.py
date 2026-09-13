@@ -21,7 +21,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -64,6 +64,10 @@ class BasicSettingsConfig(PluginConfigBase):
     """基础设置"""
 
     __ui_label__ = "基础设置"
+    __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
+        "en-US": {"title": "Basic Settings", "description": "Basic settings"},
+        "ja-JP": {"title": "基本設定", "description": "基本設定"},
+    }
 
     persona_hint: str = Field(
         default="",
@@ -72,6 +76,21 @@ class BasicSettingsConfig(PluginConfigBase):
             "label": "人格补充",
             "hint": "可选语气补充，如播报时叫用户小名；人格本体由全局配置提供",
             "placeholder": "例如：叫用户「主人」",
+            "i18n": {
+                "en-US": {
+                    "label": "Persona Supplement",
+                    "hint": "Optional tone supplement, e.g. calling the user by a "
+                    "nickname in broadcasts; the persona itself comes from the "
+                    "global config",
+                    "placeholder": 'e.g. call the user "Master"',
+                },
+                "ja-JP": {
+                    "label": "ペルソナ補足",
+                    "hint": "任意の口調補足です。配信時にユーザーの愛称で呼ぶなどの"
+                    "指定が可能。ペルソナ本体はグローバル設定で提供されます",
+                    "placeholder": "例：ユーザーを「ご主人様」と呼ぶ",
+                },
+            },
         },
     )
     user_nickname: str = Field(
@@ -80,6 +99,16 @@ class BasicSettingsConfig(PluginConfigBase):
         json_schema_extra={
             "label": "用户昵称",
             "hint": "播报称呼，留空用「主人」",
+            "i18n": {
+                "en-US": {
+                    "label": "User Nickname",
+                    "hint": 'Address used in broadcasts; leave empty to use "Master"',
+                },
+                "ja-JP": {
+                    "label": "ユーザーのニックネーム",
+                    "hint": "配信時の呼び方。空欄の場合は「ご主人様」を使用",
+                },
+            },
         },
     )
     user_ids: list[str] = Field(
@@ -89,6 +118,20 @@ class BasicSettingsConfig(PluginConfigBase):
             "label": "接收提醒的用户",
             "hint": "每项 `platform:裸ID`，如 qq:123456（operator 同款格式）",
             "placeholder": "qq:123456",
+            "i18n": {
+                "en-US": {
+                    "label": "Users Receiving Reminders",
+                    "hint": "Each item `platform:裸ID`, e.g. qq:123456 "
+                    "(same format as operator)",
+                    "placeholder": "qq:123456",
+                },
+                "ja-JP": {
+                    "label": "リマインダーを受け取るユーザー",
+                    "hint": "各項目は `platform:裸ID` 形式、例：qq:123456"
+                    "（operator と同じ形式）",
+                    "placeholder": "qq:123456",
+                },
+            },
         },
     )
 
@@ -97,16 +140,47 @@ class ScheduleReminderSettingsConfig(PluginConfigBase):
     """日程提醒"""
 
     __ui_label__ = "日程提醒"
+    __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
+        "en-US": {"title": "Schedule Reminders", "description": "Schedule reminders"},
+        "ja-JP": {
+            "title": "スケジュールリマインダー",
+            "description": "スケジュールのリマインダー",
+        },
+    }
 
     enable_schedule_reminder: bool = Field(
         default=False,
         description="开启日程 LLM 智能提醒",
-        json_schema_extra={"label": "开启日程提醒"},
+        json_schema_extra={
+            "label": "开启日程提醒",
+            "i18n": {
+                "en-US": {
+                    "label": "Enable Schedule Reminders",
+                    "hint": "Enable LLM-based smart schedule reminders",
+                },
+                "ja-JP": {
+                    "label": "スケジュールリマインダーを有効化",
+                    "hint": "LLM によるスマートなスケジュールリマインダーを有効にします",
+                },
+            },
+        },
     )
     schedule_reminder_minutes: int = Field(
         default=10,
         description="日程提前提醒分钟数",
-        json_schema_extra={"label": "提前提醒（分钟）"},
+        json_schema_extra={
+            "label": "提前提醒（分钟）",
+            "i18n": {
+                "en-US": {
+                    "label": "Remind Ahead (minutes)",
+                    "hint": "Minutes before the schedule to send the reminder",
+                },
+                "ja-JP": {
+                    "label": "事前リマインド（分）",
+                    "hint": "スケジュールの何分前にリマインドするか",
+                },
+            },
+        },
     )
     schedule_reminder_check_interval: int = Field(
         default=5,
@@ -114,6 +188,16 @@ class ScheduleReminderSettingsConfig(PluginConfigBase):
         json_schema_extra={
             "label": "扫描间隔（分钟）",
             "hint": "最小 2",
+            "i18n": {
+                "en-US": {
+                    "label": "Scan Interval (minutes)",
+                    "hint": "Minimum: 2",
+                },
+                "ja-JP": {
+                    "label": "スキャン間隔（分）",
+                    "hint": "最小 2",
+                },
+            },
         },
     )
 
@@ -122,56 +206,195 @@ class HabitReminderSettingsConfig(PluginConfigBase):
     """习惯提醒"""
 
     __ui_label__ = "习惯提醒"
+    __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
+        "en-US": {"title": "Habit Reminders", "description": "Habit reminders"},
+        "ja-JP": {"title": "習慣リマインダー", "description": "習慣リマインダー"},
+    }
 
     enable_morning_report: bool = Field(
         default=True,
         description="开启早安播报",
-        json_schema_extra={"label": "开启早安播报"},
+        json_schema_extra={
+            "label": "开启早安播报",
+            "i18n": {
+                "en-US": {
+                    "label": "Enable Morning Briefing",
+                    "hint": "Enable the morning briefing",
+                },
+                "ja-JP": {
+                    "label": "おはよう配信を有効化",
+                    "hint": "おはよう配信を有効にします",
+                },
+            },
+        },
     )
     morning_report_time: str = Field(
         default="09:00",
         description="早安播报时间（HH:MM）",
-        json_schema_extra={"label": "早安时间", "placeholder": "09:00"},
+        json_schema_extra={
+            "label": "早安时间",
+            "placeholder": "09:00",
+            "i18n": {
+                "en-US": {
+                    "label": "Morning Briefing Time",
+                    "hint": "Morning briefing time (HH:MM)",
+                    "placeholder": "09:00",
+                },
+                "ja-JP": {
+                    "label": "おはよう配信の時刻",
+                    "hint": "おはよう配信の時刻（HH:MM）",
+                    "placeholder": "09:00",
+                },
+            },
+        },
     )
     enable_bath_reminder: bool = Field(
         default=True,
         description="开启洗澡提醒（Maisaka 开口）",
-        json_schema_extra={"label": "开启洗澡提醒"},
+        json_schema_extra={
+            "label": "开启洗澡提醒",
+            "i18n": {
+                "en-US": {
+                    "label": "Enable Bath Reminder",
+                    "hint": "Enable the bath reminder (spoken by Maisaka)",
+                },
+                "ja-JP": {
+                    "label": "お風呂リマインダーを有効化",
+                    "hint": "お風呂リマインダーを有効化します（Maisaka が自ら話しかけます）",
+                },
+            },
+        },
     )
     bath_time: str = Field(
         default=DEFAULT_BATH_TIME,
         description="洗澡提醒时间（HH:MM）",
-        json_schema_extra={"label": "洗澡时间", "placeholder": "HH:MM"},
+        json_schema_extra={
+            "label": "洗澡时间",
+            "placeholder": "HH:MM",
+            "i18n": {
+                "en-US": {
+                    "label": "Bath Time",
+                    "hint": "Bath reminder time (HH:MM)",
+                    "placeholder": "HH:MM",
+                },
+                "ja-JP": {
+                    "label": "お風呂の時間",
+                    "hint": "お風呂リマインダーの時刻（HH:MM）",
+                    "placeholder": "HH:MM",
+                },
+            },
+        },
     )
     enable_sleep_reminder: bool = Field(
         default=True,
         description="开启睡觉提醒（Maisaka 开口）",
-        json_schema_extra={"label": "开启睡觉提醒"},
+        json_schema_extra={
+            "label": "开启睡觉提醒",
+            "i18n": {
+                "en-US": {
+                    "label": "Enable Sleep Reminder",
+                    "hint": "Enable the sleep reminder (spoken by Maisaka)",
+                },
+                "ja-JP": {
+                    "label": "就寝リマインダーを有効化",
+                    "hint": "就寝リマインダーを有効化します（Maisaka が自ら話しかけます）",
+                },
+            },
+        },
     )
     sleep_time: str = Field(
         default=DEFAULT_SLEEP_TIME,
         description="睡觉提醒时间（HH:MM）",
-        json_schema_extra={"label": "睡觉时间", "placeholder": "HH:MM"},
+        json_schema_extra={
+            "label": "睡觉时间",
+            "placeholder": "HH:MM",
+            "i18n": {
+                "en-US": {
+                    "label": "Sleep Time",
+                    "hint": "Sleep reminder time (HH:MM)",
+                    "placeholder": "HH:MM",
+                },
+                "ja-JP": {
+                    "label": "就寝時間",
+                    "hint": "就寝リマインダーの時刻（HH:MM）",
+                    "placeholder": "HH:MM",
+                },
+            },
+        },
     )
     enable_water_reminder: bool = Field(
         default=True,
         description="开启喝水提醒（Maisaka 开口）",
-        json_schema_extra={"label": "开启喝水提醒"},
+        json_schema_extra={
+            "label": "开启喝水提醒",
+            "i18n": {
+                "en-US": {
+                    "label": "Enable Water Reminder",
+                    "hint": "Enable the water reminder (spoken by Maisaka)",
+                },
+                "ja-JP": {
+                    "label": "水分補給リマインダーを有効化",
+                    "hint": "水分補給リマインダーを有効化します（Maisaka が自ら話しかけます）",
+                },
+            },
+        },
     )
     water_interval: int = Field(
         default=DEFAULT_WATER_INTERVAL,
         description="喝水提醒间隔（分钟）",
-        json_schema_extra={"label": "喝水间隔（分钟）"},
+        json_schema_extra={
+            "label": "喝水间隔（分钟）",
+            "i18n": {
+                "en-US": {
+                    "label": "Water Reminder Interval (minutes)",
+                    "hint": "Interval between water reminders (minutes)",
+                },
+                "ja-JP": {
+                    "label": "水分補給リマインダーの間隔（分）",
+                    "hint": "水分補給リマインダーの間隔（分）",
+                },
+            },
+        },
     )
     water_start_time: str = Field(
         default=DEFAULT_WATER_START,
         description="喝水提醒开始时间（HH:MM）",
-        json_schema_extra={"label": "喝水开始时间", "placeholder": "HH:MM"},
+        json_schema_extra={
+            "label": "喝水开始时间",
+            "placeholder": "HH:MM",
+            "i18n": {
+                "en-US": {
+                    "label": "Water Reminder Start Time",
+                    "hint": "Start time of the water reminder window (HH:MM)",
+                    "placeholder": "HH:MM",
+                },
+                "ja-JP": {
+                    "label": "水分補給の開始時刻",
+                    "hint": "水分補給リマインダーの開始時刻（HH:MM）",
+                    "placeholder": "HH:MM",
+                },
+            },
+        },
     )
     water_end_time: str = Field(
         default=DEFAULT_WATER_END,
         description="喝水提醒结束时间（HH:MM）",
-        json_schema_extra={"label": "喝水结束时间", "placeholder": "HH:MM"},
+        json_schema_extra={
+            "label": "喝水结束时间",
+            "placeholder": "HH:MM",
+            "i18n": {
+                "en-US": {
+                    "label": "Water Reminder End Time",
+                    "hint": "End time of the water reminder window (HH:MM)",
+                    "placeholder": "HH:MM",
+                },
+                "ja-JP": {
+                    "label": "水分補給の終了時刻",
+                    "hint": "水分補給リマインダーの終了時刻（HH:MM）",
+                    "placeholder": "HH:MM",
+                },
+            },
+        },
     )
 
 
@@ -179,36 +402,116 @@ class CalendarSyncSettingsConfig(PluginConfigBase):
     """日历同步"""
 
     __ui_label__ = "日历同步"
+    __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
+        "en-US": {"title": "Calendar Sync", "description": "Calendar sync"},
+        "ja-JP": {"title": "カレンダー同期", "description": "カレンダー同期"},
+    }
 
     enable_apple_calendar_sync: bool = Field(
         default=False,
         description="Apple 日历双向同步",
-        json_schema_extra={"label": "Apple 日历双向同步"},
+        json_schema_extra={
+            "label": "Apple 日历双向同步",
+            "i18n": {
+                "en-US": {
+                    "label": "Two-way Apple Calendar Sync",
+                    "hint": "Enable two-way sync with Apple Calendar",
+                },
+                "ja-JP": {
+                    "label": "Apple カレンダーの双方向同期",
+                    "hint": "Apple カレンダーとの双方向同期を有効にします",
+                },
+            },
+        },
     )
     apple_calendar_sync_interval: int = Field(
         default=30,
         description="Apple 日历同步间隔（分钟）",
-        json_schema_extra={"label": "同步间隔（分钟）"},
+        json_schema_extra={
+            "label": "同步间隔（分钟）",
+            "i18n": {
+                "en-US": {
+                    "label": "Sync Interval (minutes)",
+                    "hint": "Apple Calendar sync interval (minutes)",
+                },
+                "ja-JP": {
+                    "label": "同期間隔（分）",
+                    "hint": "Apple カレンダーの同期間隔（分）",
+                },
+            },
+        },
     )
     apple_username: str = Field(
         default="",
         description="Apple ID（iCloud 邮箱）",
-        json_schema_extra={"label": "Apple ID", "placeholder": "iCloud 邮箱"},
+        json_schema_extra={
+            "label": "Apple ID",
+            "placeholder": "iCloud 邮箱",
+            "i18n": {
+                "en-US": {
+                    "label": "Apple ID",
+                    "hint": "Apple ID (iCloud email)",
+                    "placeholder": "iCloud email",
+                },
+                "ja-JP": {
+                    "label": "Apple ID",
+                    "hint": "Apple ID（iCloud のメールアドレス）",
+                    "placeholder": "iCloud のメールアドレス",
+                },
+            },
+        },
     )
     apple_app_password: str = Field(
         default="",
         description="App 专用密码",
-        json_schema_extra={"label": "App 专用密码"},
+        json_schema_extra={
+            "label": "App 专用密码",
+            "i18n": {
+                "en-US": {
+                    "label": "App-Specific Password",
+                    "hint": "App-specific password",
+                },
+                "ja-JP": {
+                    "label": "アプリ専用パスワード",
+                    "hint": "アプリ専用パスワード",
+                },
+            },
+        },
     )
     apple_calendar_id: str = Field(
         default="",
         description="日历 ID（可留空）",
-        json_schema_extra={"label": "日历 ID", "hint": "可留空"},
+        json_schema_extra={
+            "label": "日历 ID",
+            "hint": "可留空",
+            "i18n": {
+                "en-US": {
+                    "label": "Calendar ID",
+                    "hint": "Can be left empty",
+                },
+                "ja-JP": {
+                    "label": "カレンダー ID",
+                    "hint": "空欄可",
+                },
+            },
+        },
     )
     webcal_urls: list[str] = Field(
         default_factory=list,
         description="WebCal 共享日历链接列表",
-        json_schema_extra={"label": "WebCal 订阅链接"},
+        json_schema_extra={
+            "label": "WebCal 订阅链接",
+            "i18n": {
+                "en-US": {
+                    "label": "WebCal Subscription URLs",
+                    "hint": "List of WebCal shared calendar URLs",
+                },
+                "ja-JP": {
+                    "label": "WebCal 購読リンク",
+                    "hint": "WebCal 共有カレンダーのリンクリスト",
+                },
+            },
+        },
     )
 
 
@@ -216,6 +519,10 @@ class ExternalServicesSettingsConfig(PluginConfigBase):
     """外部服务"""
 
     __ui_label__ = "外部服务"
+    __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
+        "en-US": {"title": "External Services", "description": "External services"},
+        "ja-JP": {"title": "外部サービス", "description": "外部サービス"},
+    }
 
     maton_api_key: str = Field(
         default="",
@@ -226,6 +533,16 @@ class ExternalServicesSettingsConfig(PluginConfigBase):
         json_schema_extra={
             "label": "Maton API Key（第三方网关）",
             "hint": "发往 gateway.maton.ai，非 Notion 官方直连",
+            "i18n": {
+                "en-US": {
+                    "label": "Maton API Key (third-party gateway)",
+                    "hint": "Sent to gateway.maton.ai, not the official Notion API",
+                },
+                "ja-JP": {
+                    "label": "Maton API Key（サードパーティーゲートウェイ）",
+                    "hint": "gateway.maton.ai に送信され、Notion 公式への直接接続ではありません",
+                },
+            },
         },
     )
     notion_db_ids: list[str] = Field(
@@ -234,17 +551,53 @@ class ExternalServicesSettingsConfig(PluginConfigBase):
         json_schema_extra={
             "label": "Notion 数据库 ID",
             "hint": "可带 事务:/阅读: 前缀",
+            "i18n": {
+                "en-US": {
+                    "label": "Notion Database IDs",
+                    "hint": "May carry a 事务:/阅读: prefix "
+                    "(transaction:/reading: also accepted)",
+                },
+                "ja-JP": {
+                    "label": "Notion データベース ID",
+                    "hint": "先頭に 事务:/阅读: のプレフィックスを付けられます"
+                    "（transaction:/reading: も可）",
+                },
+            },
         },
     )
     weather_api_key: str = Field(
         default="",
         description="心知天气 API Key",
-        json_schema_extra={"label": "心知天气 API Key"},
+        json_schema_extra={
+            "label": "心知天气 API Key",
+            "i18n": {
+                "en-US": {
+                    "label": "Seniverse Weather API Key",
+                    "hint": "API Key of the Seniverse weather service",
+                },
+                "ja-JP": {
+                    "label": "心知天気（Seniverse）API Key",
+                    "hint": "心知天気（Seniverse）の API Key",
+                },
+            },
+        },
     )
     weather_city: str = Field(
         default="北京",
         description="天气查询城市",
-        json_schema_extra={"label": "天气城市"},
+        json_schema_extra={
+            "label": "天气城市",
+            "i18n": {
+                "en-US": {
+                    "label": "Weather City",
+                    "hint": "City for weather queries",
+                },
+                "ja-JP": {
+                    "label": "天気の取得都市",
+                    "hint": "天気を取得する都市",
+                },
+            },
+        },
     )
 
 
@@ -252,6 +605,13 @@ class MessageRenderSettingsConfig(PluginConfigBase):
     """消息渲染"""
 
     __ui_label__ = "消息渲染"
+    __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
+        "en-US": {"title": "Message Rendering", "description": "Message rendering"},
+        "ja-JP": {
+            "title": "メッセージのレンダリング",
+            "description": "メッセージのレンダリング",
+        },
+    }
 
     markdown_enabled: bool = Field(
         default=True,
@@ -259,6 +619,17 @@ class MessageRenderSettingsConfig(PluginConfigBase):
         json_schema_extra={
             "label": "Markdown 渲染",
             "hint": "QQ 官方适配器经 qq_markdown 结构化发送",
+            "i18n": {
+                "en-US": {
+                    "label": "Markdown Rendering",
+                    "hint": "Sent as structured qq_markdown messages via the "
+                    "official QQ adapter",
+                },
+                "ja-JP": {
+                    "label": "Markdown レンダリング",
+                    "hint": "公式 QQ アダプター経由で qq_markdown の構造化メッセージとして送信",
+                },
+            },
         },
     )
 
@@ -267,6 +638,16 @@ class PromptSettingsConfig(PluginConfigBase):
     """提醒 Prompt 模板"""
 
     __ui_label__ = "提醒 Prompt 模板"
+    __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
+        "en-US": {
+            "title": "Reminder Prompt Templates",
+            "description": "Reminder prompt templates",
+        },
+        "ja-JP": {
+            "title": "リマインダー Prompt テンプレート",
+            "description": "リマインダー Prompt テンプレート",
+        },
+    }
 
     prompt_morning: str = Field(
         default="",
@@ -275,6 +656,18 @@ class PromptSettingsConfig(PluginConfigBase):
             "label": "早安播报模板",
             "hint": "留空用内置默认模板",
             "placeholder": "{username} {date} {weekday} {weather_current} {agenda}…",
+            "i18n": {
+                "en-US": {
+                    "label": "Morning Briefing Template",
+                    "hint": "Leave empty to use the built-in default template",
+                    "placeholder": "{username} {date} {weekday} {weather_current} {agenda}…",
+                },
+                "ja-JP": {
+                    "label": "おはよう配信テンプレート",
+                    "hint": "空欄の場合は内蔵のデフォルトテンプレートを使用",
+                    "placeholder": "{username} {date} {weekday} {weather_current} {agenda}…",
+                },
+            },
         },
     )
     prompt_schedule: str = Field(
@@ -284,6 +677,18 @@ class PromptSettingsConfig(PluginConfigBase):
             "label": "日程提醒模板",
             "hint": "留空用内置默认模板",
             "placeholder": "{item_title} {time_label} {ahead_label}…",
+            "i18n": {
+                "en-US": {
+                    "label": "Schedule Reminder Template",
+                    "hint": "Leave empty to use the built-in default template",
+                    "placeholder": "{item_title} {time_label} {ahead_label}…",
+                },
+                "ja-JP": {
+                    "label": "スケジュールリマインダーテンプレート",
+                    "hint": "空欄の場合は内蔵のデフォルトテンプレートを使用",
+                    "placeholder": "{item_title} {time_label} {ahead_label}…",
+                },
+            },
         },
     )
 
@@ -292,16 +697,45 @@ class PluginBaseConfig(PluginConfigBase):
     """插件基础配置"""
 
     __ui_label__ = "插件基础设置"
+    __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
+        "en-US": {"title": "Plugin Basics", "description": "Plugin base configuration"},
+        "ja-JP": {"title": "プラグイン基本設定", "description": "プラグインの基本設定"},
+    }
 
     config_version: str = Field(
         default="1.0.0",
         description="配置版本号",
-        json_schema_extra={"label": "配置版本", "disabled": True},
+        json_schema_extra={
+            "label": "配置版本",
+            "disabled": True,
+            "i18n": {
+                "en-US": {
+                    "label": "Config Version",
+                    "hint": "Configuration version number",
+                },
+                "ja-JP": {
+                    "label": "設定バージョン",
+                    "hint": "設定のバージョン番号",
+                },
+            },
+        },
     )
     enabled: bool = Field(
         default=True,
         description="是否启用插件",
-        json_schema_extra={"label": "启用插件"},
+        json_schema_extra={
+            "label": "启用插件",
+            "i18n": {
+                "en-US": {
+                    "label": "Enable Plugin",
+                    "hint": "Whether to enable the plugin",
+                },
+                "ja-JP": {
+                    "label": "プラグインを有効化",
+                    "hint": "プラグインを有効にするかどうか",
+                },
+            },
+        },
     )
 
 
