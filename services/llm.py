@@ -9,7 +9,9 @@ logger = logging.getLogger(__name__)
 
 _LLM_CIRCUIT_BREAKER_TTL = 300  # 5分钟
 # 生成文本用的模型任务槽（对应 Host 模型类别：replyer/planner/utils/vlm）。
-# 不传时 Host 默认路由到 embedding 类别、不能文本生成（404），故必须显式指定。
+# 必须用 task_name 传：SDK 2.8.1 的 ctx.llm.generate 每次都会带上 task_name（缺省 "utils"），
+# Host 见到 task_name 就把 model 参数当成「具体模型名」去模型配置的 [[models]] 里查，
+# 于是 model="replyer" 会报「未找到名为 'replyer' 的模型」。task_name 才是任务槽参数。
 _DEFAULT_LLM_TASK = "replyer"
 
 
@@ -107,11 +109,11 @@ class LLMService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt},
                     ],
-                    model=_DEFAULT_LLM_TASK,
+                    task_name=_DEFAULT_LLM_TASK,
                 )
             else:
                 result = await self._ctx.ctx.llm.generate(
-                    prompt=prompt, model=_DEFAULT_LLM_TASK
+                    prompt=prompt, task_name=_DEFAULT_LLM_TASK
                 )
             self._llm_failure_time = 0.0  # 成功，重置断路器
             text = (result or {}).get("response") or ""

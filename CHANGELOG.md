@@ -5,6 +5,12 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1] - 2026-09-18
+
+### 🐛 修复
+
+- **修复 LLM 文本生成在 maibot-plugin-sdk 2.8.1 上全部失败**：`ctx.llm.generate` 的模型任务槽改由 `task_name` 传入（此前用 `model="replyer"`）。SDK 每次调用都会带上 `task_name`，宿主据此把 `model` 参数当作具体模型名去 `[[models]]` 查找，因此报「未找到名为 'replyer' 的模型」，早安播报、日程播报与提醒文案均退化为兜底文本。
+
 ## [1.1.0] - 2026-09-14
 
 ### ✨ 新增
