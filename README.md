@@ -24,7 +24,7 @@
 
 | 特性 | 说明 |
 |------|------|
-| 🌅 **早安播报** | 每天固定时间推送（天气 / 今日日程 / Notion 待办），Markdown 精美排版 |
+| 🌅 **早安播报** | 每天固定时间推送（天气 / 今日日程 / Notion 待办 / 熬夜检测），Markdown 精美排版 |
 | 📌 **日程智能提醒** | 日程临近时由 Maisaka **拟人化开口**（注入回复生命周期），覆盖本地日程与 Apple 日历事件 |
 | 🚿 **习惯提醒** | 洗澡 / 睡觉 / 喝水，由 Maisaka 基于人格**拟人化开口** |
 | 🗓️ **日程管理** | LLM 自然语言创建 / 删除 / 查询 / 修改日程（支持时间区间「9点到11点」与全天日程） |
@@ -134,6 +134,8 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | `delete_schedule` | 删除日程 | schedule_id / title_keyword |
 | `list_schedules` | 查看日程 | date（缺省今天） |
 | `update_schedule` | 修改日程（单点 / 区间 / 全天） | schedule_id / title / datetime_str / end_datetime_str |
+
+> ⏱️ **时间写法**：数字/ISO 格式（`2024-01-15 14:30`、`2024-01-15 09:00-11:00`、`2024-01-16`）或中文口语（「明天9点」「明天9点到11点」「明天全天」）；纯日期即全天，两端纯日期的区间（「明天到后天」）取开始日。
 
 ```
 用户: 帮我记一个日程，明天下午3点开组会，记得带电脑
