@@ -1,114 +1,25 @@
 """
 日程提醒模块（MaiBot 插件版）
 
-只扫描 schedule 类型的日程，habit 类型（洗澡/睡觉/喝水）由独立定时任务处理，
-避免同一条目被多次提醒。LLM 生成端走固定格式直发（100% 回复保证，
-见 plugin.py 的 _schedule_reminder_scan）。
+只负责「谁该被提醒、何时算到点」：扫描 schedule 类型日程、判定提前量窗口、
+写防重标记，并把到点事件打包成 intent 文本。habit 类型（洗澡/睡觉/喝水）由
+独立定时任务处理，全天事件不提前提醒，均不在此扫描。
+
+措辞与发送不在本模块：插件侧把 intent 注入 Maisaka 回复生命周期拟人开口
+（见 plugin.py 的 _schedule_reminder_scan / _schedule_reminder_maisaka）。
 """
 
 import logging
 from datetime import datetime
 from typing import Any
 
-from ..constants import BROADCAST_MD_OVERRIDE, LOG_PREFIX
-from ..prompt_config import DEFAULT_PROMPT_SCHEDULE, render_prompt
+from ..constants import LOG_PREFIX
 
 logger = logging.getLogger(__name__)
 
 
-class ScheduleReminder:
-    """
-    日程 LLM 提醒生成器
-
-    注入信息：
-    - 日程名称、时间、备注/描述
-    - 提前分钟数
-    """
-
-    def __init__(self, llm_service, config: dict | None = None):
-        self.llm = llm_service
-        self.config = config or {}
-
-    def _build_prompt(
-        self,
-        item_title: str,
-        item_time: str,
-        item_context: str,
-        minutes_ahead: int,
-    ) -> str:
-        """构建 LLM 提醒 prompt（config 化，默认自然口语模板）"""
-
-        time_label = self._format_time_label(item_time)
-        ahead_label = self._format_ahead_label(minutes_ahead)
-        template = self.config.get("prompt_schedule") or DEFAULT_PROMPT_SCHEDULE
-
-        return render_prompt(
-            template,
-            {
-                "item_title": item_title,
-                "time_label": time_label,
-                "ahead_label": ahead_label,
-                "item_context": item_context or "",
-            },
-        )
-
-    @staticmethod
-    def _format_time_label(item_time: str) -> str:
-        """把 '2026-09-01 14:30' 转成 '14:30'，失败则原样返回"""
-        try:
-            return datetime.strptime(item_time, "%Y-%m-%d %H:%M").strftime("%H:%M")
-        except (ValueError, TypeError):
-            return item_time or ""
-
-    @staticmethod
-    def _format_ahead_label(minutes_ahead: int) -> str:
-        """把提前分钟数转成通顺表述"""
-        try:
-            m = int(minutes_ahead)
-        except (ValueError, TypeError):
-            return "即将"
-        if m <= 0:
-            return "马上开始"
-        if m < 60:
-            return f"{m} 分钟后开始"
-        h, rem = divmod(m, 60)
-        if rem == 0:
-            return f"{h} 小时后开始"
-        return f"{h}小时{rem}分后开始"
-
-    async def generate_reminder_text(
-        self,
-        item_title: str,
-        item_time: str,
-        item_context: str,
-        minutes_ahead: int = 10,
-        user_id: str | None = None,
-    ) -> str:
-        """生成提醒文本（带 LLM fallback）"""
-
-        prompt = self._build_prompt(
-            item_title=item_title,
-            item_time=item_time,
-            item_context=item_context,
-            minutes_ahead=minutes_ahead,
-        )
-
-        try:
-            resp = await self.llm.generate(
-                prompt, umo=user_id, extra_system=BROADCAST_MD_OVERRIDE
-            )
-            text = resp.strip() if resp else None
-            if text and len(text) > 5:
-                logger.debug(f"{LOG_PREFIX} LLM 提醒生成成功: {text[:30]}...")
-                return text
-        except Exception as e:
-            logger.warning(f"{LOG_PREFIX} LLM 提醒生成失败: {e}")
-
-        return f"📅 提醒：「{item_title}」即将开始，记得准备哦~"
-
-
-def _parse_time(time_str: str) -> datetime | None:
-    """解析时间字符串为 datetime，支持 ISO 格式、时区后缀和普通格式"""
+def parse_item_time(time_str: str) -> datetime | None:
+    """解析日程时间字符串，支持 ISO 格式、时区后缀和普通格式"""
     if not time_str:
         return None
     s = time_str.strip()
@@ -143,97 +54,85 @@ def _is_all_day_event(item) -> bool:
     return False
 
 
-async def check_and_trigger_schedule_reminder(
+async def collect_due_schedule_items(
     schedule_store,
-    llm_service,
     user_id: str,
     minutes_before: int = 15,
-    reminder: "ScheduleReminder | None" = None,
 ) -> list[dict[str, Any]]:
-    """
-    扫描即将到来的日程（仅 schedule 类型）并生成提醒。
+    """选出即将开始的日程（仅 schedule 类型），并写防重标记。
 
-    habit 类型（洗澡/睡觉/喝水）由独立定时任务处理，不在此扫描，避免重复提醒。
+    提醒时机：开始前 minutes_before 分钟内（0 < 剩余分钟 <= minutes_before）
+    触发一次；整个提前量窗口都有效，配合任意扫描间隔都不会漏掉窗口内的事件。
 
-    提醒时机：
-    - 提前提醒：在日程开始前 minutes_before ±2 分钟时触发（可配置，0 表示关闭）
-    - 即将开始兜底：前 5 分钟内也会触发
-    - 全天事件不触发提前提醒
+    防重：last_triggered 持久化，同一事件只提醒一次（重启不重发）；事件改期会
+    重置该标记——Apple 同步（schedule_store.sync_from_apple_calendar）与工具
+    修改（tools/schedule_tools.update_schedule）同口径。
+
+    habit（洗澡/睡觉/喝水）、全天事件、已停用条目不提醒。
+
+    Returns:
+        list[dict]: 到点事件（item_id/title/start/end/minutes_until/context/source）
     """
-    # 复用调用方已创建的实例，避免每轮扫描重复构造
-    reminder = reminder or ScheduleReminder(llm_service)
-    triggered = []
     now = datetime.now()
+    due: list[dict[str, Any]] = []
 
-    all_items = await schedule_store.list_all_items(user_id)
-
-    for item in all_items:
-        if not item.enabled:
+    for item in await schedule_store.list_all_items(user_id):
+        if not item.enabled or item.type == "habit":
             continue
-
-        # 跳过习惯类型：洗澡/睡觉/喝水已有独立定时任务，避免重复提醒
-        if item.type == "habit":
-            continue
-
-        # 跳过全天事件（提前提醒不适用）
         if _is_all_day_event(item):
             continue
+        if item.last_triggered:
+            continue
 
-        item_dt = _parse_time(item.time)
-
+        item_dt = parse_item_time(item.time)
         if not item_dt:
             continue
 
         minutes_until = (item_dt - now).total_seconds() / 60
-
-        # 检查是否已触发过（1小时内避免重复）
-        if item.last_triggered:
-            try:
-                last_dt = datetime.fromisoformat(item.last_triggered)
-                if (now - last_dt).total_seconds() > 3600:
-                    item.last_triggered = None
-            except (ValueError, TypeError):
-                pass
-
-        if item.last_triggered:
+        if not 0 < minutes_until <= minutes_before:
             continue
 
-        # 判断是否需要触发提醒
-        should_trigger = False
-        trigger_minutes = 0
-
-        # 1. 提前提醒：日程开始前 minutes_before ±2 分钟
-        if minutes_before > 0 and abs(minutes_until - minutes_before) <= 2:
-            should_trigger = True
-            trigger_minutes = int(minutes_until)
-
-        # 2. 即将开始兜底：前 5 分钟内
-        if not should_trigger and 0 <= minutes_until <= 5:
-            should_trigger = True
-            trigger_minutes = int(minutes_until)
-
-        if not should_trigger:
-            continue
-
-        reminder_text = await reminder.generate_reminder_text(
-            item_title=item.title,
-            item_time=item.time,
-            item_context=item.context,
-            minutes_ahead=trigger_minutes,
-            user_id=user_id,
-        )
-
-        triggered.append(
+        end_dt = parse_item_time(item.end_time) if item.end_time else None
+        due.append(
             {
                 "item_id": item.id,
                 "title": item.title,
-                "reminder_text": reminder_text,
-                "minutes_until": trigger_minutes,
-                "type": item.type,
+                "start": item_dt.strftime("%H:%M"),
+                "end": end_dt.strftime("%H:%M") if end_dt else "",
+                "minutes_until": int(minutes_until),
+                "context": (item.context or "").strip(),
+                "source": "apple" if item.apple_uid else "local",
             }
         )
-
+        logger.debug(
+            f"{LOG_PREFIX} 日程到点提醒: {item.title} ({item.time}) "
+            f"剩余 {int(minutes_until)} 分钟"
+        )
         item.last_triggered = now.isoformat()
         await schedule_store.update_item(user_id, item)
 
-    return triggered
+    return due
+
+
+def build_schedule_reminder_intent(items: list[dict[str, Any]]) -> str:
+    """把到点日程打包成一条 Maisaka intent（多事件合并为一次开口，避免刷屏）"""
+    lines = []
+    for it in items:
+        title = (it.get("title") or "").strip() or "无标题"
+        start = it.get("start") or ""
+        end = it.get("end") or ""
+        time_label = f"{start}-{end}" if start and end else start
+        minutes = it.get("minutes_until") or 0
+        if minutes > 0:
+            timing = f"{time_label} 开始（约 {minutes} 分钟后）"
+        else:
+            timing = f"{time_label} 马上开始"
+        line = f"- 「{title}」{timing}"
+        context = (it.get("context") or "").strip()
+        if context:
+            line += f"｜{context}"
+        lines.append(line)
+    return (
+        "日程提醒：以下日程快开始了，请自然地随口提醒用户"
+        "（简短口语化，可带关切）：\n" + "\n".join(lines)
+    )

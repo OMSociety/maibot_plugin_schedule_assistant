@@ -2,13 +2,14 @@
 
 从 AstrBot 插件 astrbot_plugin_schedule_assistant 迁移（AGPL-3.0）。
 
-功能分工（用户决策，plan v3）：
+功能分工（用户决策）：
 - 早安播报：固定格式直发（LLM + markdown，100% 送达）
-- 日程提醒：固定格式直发（LLM + markdown，100% 送达，保留扫描窗口/防重）
-- 洗澡/睡觉/喝水：Maisaka 自己开口（ctx.maisaka.proactive.trigger，拟人化）
-- 日程 CRUD：4 个 @Tool（LLM 工具）
+- 日程提醒（含 Apple 日历事件提前提醒）：Maisaka 自己开口
+  （ctx.maisaka.proactive.trigger，intent 注入回复生命周期）
+- 洗澡/睡觉/喝水：Maisaka 自己开口（同上，拟人化）
+- 日程 CRUD：4 个 @Tool（LLM 工具，支持单时间点 / 时间区间 / 全天）
 - Apple 日历双向同步 / Notion 待办 / 天气：外部服务复用
-- 消息事件：不做（MaiBot 无官方用户上下文 API，昵称走配置、日程提醒「近期对话」恒为空）
+- 消息事件：不做（MaiBot 无官方用户上下文 API，昵称走配置）
 
 关键差异（相对 AstrBot 版）：
 - 主动推送：user_id → ctx.chat 查聊天流 → ctx.send.custom/text（无 UMO 路由）
@@ -29,6 +30,7 @@ from maibot_sdk import Field, MaiBotPlugin, PluginConfigBase, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 from .apple_calendar import AppleCalendar
+from .async_utils import try_lock
 from .constants import (
     DEFAULT_BATH_TIME,
     DEFAULT_SLEEP_TIME,
@@ -42,7 +44,11 @@ from .engine import TimedMessageEngine
 from .messaging import MessagingService, extract_stream_id, parse_user_target
 from .notion_client import NotionClient
 from .reminders.briefing import BriefingReminder
-from .reminders.schedule import ScheduleReminder, check_and_trigger_schedule_reminder
+from .reminders.schedule import (
+    build_schedule_reminder_intent,
+    collect_due_schedule_items,
+    parse_item_time,
+)
 from .schedule_store import ScheduleItem, ScheduleStore
 from .services.llm import LLMService
 from .services.notion import NotionService
@@ -150,17 +156,19 @@ class ScheduleReminderSettingsConfig(PluginConfigBase):
 
     enable_schedule_reminder: bool = Field(
         default=False,
-        description="开启日程 LLM 智能提醒",
+        description="开启日程与 Apple 日历事件的提前提醒（由 Maisaka 拟人开口）",
         json_schema_extra={
             "label": "开启日程提醒",
             "i18n": {
                 "en-US": {
                     "label": "Enable Schedule Reminders",
-                    "hint": "Enable LLM-based smart schedule reminders",
+                    "hint": "Advance reminders for schedules and Apple Calendar "
+                    "events (spoken by Maisaka)",
                 },
                 "ja-JP": {
                     "label": "スケジュールリマインダーを有効化",
-                    "hint": "LLM によるスマートなスケジュールリマインダーを有効にします",
+                    "hint": "スケジュールと Apple カレンダーの予定を事前にリマインド"
+                    "します（Maisaka が自ら話しかけます）",
                 },
             },
         },
@@ -187,15 +195,15 @@ class ScheduleReminderSettingsConfig(PluginConfigBase):
         description="日程提醒扫描间隔（分钟），最小 2",
         json_schema_extra={
             "label": "扫描间隔（分钟）",
-            "hint": "最小 2",
+            "hint": "最小 2，建议不大于提前提醒分钟数",
             "i18n": {
                 "en-US": {
                     "label": "Scan Interval (minutes)",
-                    "hint": "Minimum: 2",
+                    "hint": "Minimum: 2; keep it no greater than the remind-ahead minutes",
                 },
                 "ja-JP": {
                     "label": "スキャン間隔（分）",
-                    "hint": "最小 2",
+                    "hint": "最小 2、事前リマインド分数以下を推奨",
                 },
             },
         },
@@ -635,17 +643,17 @@ class MessageRenderSettingsConfig(PluginConfigBase):
 
 
 class PromptSettingsConfig(PluginConfigBase):
-    """提醒 Prompt 模板"""
+    """早安播报的 LLM 提示词模板"""
 
-    __ui_label__ = "提醒 Prompt 模板"
+    __ui_label__ = "早安播报模板"
     __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
         "en-US": {
-            "title": "Reminder Prompt Templates",
-            "description": "Reminder prompt templates",
+            "title": "Morning Briefing Template",
+            "description": "LLM prompt templates for the morning briefing",
         },
         "ja-JP": {
-            "title": "リマインダー Prompt テンプレート",
-            "description": "リマインダー Prompt テンプレート",
+            "title": "おはよう配信テンプレート",
+            "description": "おはよう配信用の LLM プロンプトテンプレート",
         },
     }
 
@@ -670,27 +678,6 @@ class PromptSettingsConfig(PluginConfigBase):
             },
         },
     )
-    prompt_schedule: str = Field(
-        default="",
-        description="日程提醒模板。留空则使用内置默认模板；占位符：{item_title} {time_label} {ahead_label} {item_context}",
-        json_schema_extra={
-            "label": "日程提醒模板",
-            "hint": "留空用内置默认模板",
-            "placeholder": "{item_title} {time_label} {ahead_label}…",
-            "i18n": {
-                "en-US": {
-                    "label": "Schedule Reminder Template",
-                    "hint": "Leave empty to use the built-in default template",
-                    "placeholder": "{item_title} {time_label} {ahead_label}…",
-                },
-                "ja-JP": {
-                    "label": "スケジュールリマインダーテンプレート",
-                    "hint": "空欄の場合は内蔵のデフォルトテンプレートを使用",
-                    "placeholder": "{item_title} {time_label} {ahead_label}…",
-                },
-            },
-        },
-    )
 
 
 class PluginBaseConfig(PluginConfigBase):
@@ -703,7 +690,7 @@ class PluginBaseConfig(PluginConfigBase):
     }
 
     config_version: str = Field(
-        default="1.0.0",
+        default="1.1.0",
         description="配置版本号",
         json_schema_extra={
             "label": "配置版本",
@@ -766,7 +753,7 @@ class ScheduleAssistantConfig(PluginConfigBase):
         default_factory=MessageRenderSettingsConfig, description="消息渲染"
     )
     prompt_settings: PromptSettingsConfig = Field(
-        default_factory=PromptSettingsConfig, description="提醒 Prompt 模板"
+        default_factory=PromptSettingsConfig, description="早安播报模板"
     )
 
 
@@ -789,7 +776,6 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         self.notion_service: NotionService | None = None
         self.apple_calendar: AppleCalendar | None = None
         self.briefing_reminder: BriefingReminder | None = None
-        self.schedule_reminder: ScheduleReminder | None = None
         self._services_ready = False
         self._services_init_lock = asyncio.Lock()
         self._tasks_registered = False
@@ -838,7 +824,6 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         cfg["weather_city"] = c.external_services.weather_city
         cfg["markdown_enabled"] = c.message_render.markdown_enabled
         cfg["prompt_morning"] = c.prompt_settings.prompt_morning or ""
-        cfg["prompt_schedule"] = c.prompt_settings.prompt_schedule or ""
         return cfg
 
     # ── 生命周期 ────────────────────────────────────────
@@ -943,7 +928,6 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                     self.notion_service = None
 
             self.briefing_reminder = BriefingReminder(conf, self, self.llm_service)
-            self.schedule_reminder = ScheduleReminder(self.llm_service, conf)
 
             if conf.get("enable_apple_calendar_sync"):
                 apple_conf = conf.get("apple_calendar", {})
@@ -1003,7 +987,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 coalesce=True,
             )
 
-        # 日程提醒扫描（固定格式直发）
+        # 日程提醒扫描（Maisaka 注入回复生命周期）
         if conf.get("enable_schedule_reminder"):
             check_interval = max(
                 2, int(conf.get("schedule_reminder_check_interval", 5) or 5)
@@ -1112,31 +1096,46 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         "water": "water_reminder",
     }
 
-    async def _trigger_maisaka(self, habit_type: str, user_id: str) -> bool:
-        """对单个用户触发 Maisaka 主动开口，返回是否成功"""
+    async def _trigger_maisaka(
+        self,
+        user_id: str,
+        intent: str,
+        reason: str,
+        metadata: dict | None = None,
+    ) -> bool:
+        """对单个用户触发 Maisaka 主动开口（intent 注入回复生命周期），返回是否成功"""
         stream = await self._get_user_stream(user_id)
         if not stream:
             return False
         try:
             await self.ctx.maisaka.proactive.trigger(
                 stream_id=extract_stream_id(stream),
-                intent=self._MAISAKA_INTENTS.get(habit_type, "定时提醒"),
-                reason=self._MAISAKA_REASONS.get(habit_type, "habit_reminder"),
-                metadata={"source": "schedule_assistant", "habit": habit_type},
+                intent=intent,
+                reason=reason,
+                metadata=metadata or {"source": "schedule_assistant"},
             )
             return True
         except Exception as e:
             self.ctx.logger.warning(
-                f"{LOG_PREFIX} Maisaka {habit_type} 提醒触发失败 user={user_id}: {e}"
+                f"{LOG_PREFIX} Maisaka 主动触发失败 user={user_id} reason={reason}: {e}"
             )
             return False
+
+    async def _trigger_maisaka_habit(self, habit_type: str, user_id: str) -> bool:
+        """习惯提醒（洗澡/睡觉/喝水）的 Maisaka 触发入口"""
+        return await self._trigger_maisaka(
+            user_id,
+            intent=self._MAISAKA_INTENTS.get(habit_type, "定时提醒"),
+            reason=self._MAISAKA_REASONS.get(habit_type, "habit_reminder"),
+            metadata={"source": "schedule_assistant", "habit": habit_type},
+        )
 
     def _maisaka_habit_provider(self, habit_type: str):
         """构造 Maisaka 主动提醒 provider（定时引擎调用，触发 Maisaka 开口）"""
 
         async def provider(user_id: str, shared: Any = None) -> str | None:
             """返回 None（不直发）；实际通过 Maisaka proactive 触发"""
-            await self._trigger_maisaka(habit_type, user_id)
+            await self._trigger_maisaka_habit(habit_type, user_id)
             return None  # 不直发
 
         return provider
@@ -1167,20 +1166,47 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         for user_id in await self.messaging.resolve_target_users(
             include_known_users=True
         ):
-            await self._trigger_maisaka(habit_type, user_id)
+            await self._trigger_maisaka_habit(habit_type, user_id)
 
-    # ── 日程提醒扫描（固定格式直发）────────────────────
+    # ── 日程提醒扫描（Maisaka 注入回复生命周期）────────
+
+    async def _schedule_reminder_maisaka(self, user_id: str, items: list[dict]) -> bool:
+        """把到点日程注入 Maisaka 回复生命周期（同轮多事件合并为一次开口）"""
+        if not items:
+            return True
+        ok = await self._trigger_maisaka(
+            user_id,
+            intent=build_schedule_reminder_intent(items),
+            reason="schedule_reminder",
+            metadata={
+                "source": "schedule_assistant",
+                "kind": "schedule_reminder",
+                "items": [
+                    {
+                        k: it.get(k)
+                        for k in ("item_id", "title", "start", "end", "minutes_until")
+                    }
+                    for it in items
+                ],
+            },
+        )
+        if not ok:
+            self.ctx.logger.warning(
+                f"{LOG_PREFIX} 日程提醒触发失败 user={user_id} "
+                f"items={[it.get('title') for it in items]}"
+            )
+        return ok
 
     async def _schedule_reminder_scan(self) -> None:
-        lock = self._schedule_reminder_scan_lock
-        try:
-            await asyncio.wait_for(lock.acquire(), timeout=0)
-        except asyncio.TimeoutError:
-            return
-        try:
-            await self._ensure_services()
-            if not self.schedule_reminder or not self.messaging:
+        async with try_lock(self._schedule_reminder_scan_lock) as acquired:
+            if not acquired:
                 return
+            await self._ensure_services()
+            if not self.messaging:
+                return
+
+            # Apple 事件先入库再扫：手机侧新加/改期的事件也能被提前提醒
+            await self._apple_calendar_sync()
 
             conf = self._flat_config()
             minutes_ahead = max(1, int(conf.get("schedule_reminder_minutes", 10) or 10))
@@ -1189,53 +1215,43 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 include_known_users=True
             ):
                 try:
-                    triggered = await check_and_trigger_schedule_reminder(
-                        schedule_store=self.store,
-                        llm_service=self.llm_service,
-                        user_id=user_id,
-                        minutes_before=minutes_ahead,
-                        reminder=self.schedule_reminder,
+                    due = await collect_due_schedule_items(
+                        self.store, user_id, minutes_ahead
                     )
-                    for item in triggered:
-                        if item.get("reminder_text"):
-                            await self.messaging.send_to_user(
-                                user_id, item["reminder_text"]
-                            )
+                    if due:
+                        await self._schedule_reminder_maisaka(user_id, due)
                 except Exception as e:
                     self.ctx.logger.warning(
                         f"{LOG_PREFIX} 用户 {user_id} 日程提醒扫描失败: {e}"
                     )
-        finally:
-            lock.release()
 
     # ── Apple 日历同步 ─────────────────────────────────
 
     async def _apple_calendar_sync(self) -> None:
-        lock = self._apple_calendar_sync_lock
-        try:
-            await asyncio.wait_for(lock.acquire(), timeout=0)
-        except asyncio.TimeoutError:
+        async with try_lock(self._apple_calendar_sync_lock) as acquired:
+            if not acquired:
+                return
+            await self._refresh_apple_events_to_store()
+
+    async def _refresh_apple_events_to_store(self) -> None:
+        """拉取 Apple 日历事件并同步进本地库（同步任务与提醒扫描共用）"""
+        if not self.apple_calendar or not self.messaging:
             return
         try:
-            if not self.apple_calendar or not self.messaging:
+            events = await self.apple_calendar.get_all_events(days=7)
+            if not events:
                 return
-            try:
-                events = await self.apple_calendar.get_all_events(days=7)
-                if not events:
-                    return
-                for user_id in await self.messaging.resolve_target_users(
-                    include_known_users=True
-                ):
-                    stats = await self.store.sync_from_apple_calendar(user_id, events)
-                    if stats.get("added", 0) > 0:
-                        self.ctx.logger.info(
-                            f"{LOG_PREFIX} Apple→本地同步 user={user_id} "
-                            f"added={stats['added']}"
-                        )
-            except Exception as e:
-                self.ctx.logger.error(f"{LOG_PREFIX} Apple Calendar 同步失败: {e}")
-        finally:
-            lock.release()
+            for user_id in await self.messaging.resolve_target_users(
+                include_known_users=True
+            ):
+                stats = await self.store.sync_from_apple_calendar(user_id, events)
+                if stats.get("added", 0) > 0:
+                    self.ctx.logger.info(
+                        f"{LOG_PREFIX} Apple→本地同步 user={user_id} "
+                        f"added={stats['added']}"
+                    )
+        except Exception as e:
+            self.ctx.logger.error(f"{LOG_PREFIX} Apple Calendar 同步失败: {e}")
 
     async def _clear_expired_overrides(self) -> None:
         if not self.messaging:
@@ -1269,6 +1285,22 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         schedules_dict = await self.store.get_schedules(user_id)
         return schedules_dict.get(SCHEDULES_KEY, [])
 
+    @staticmethod
+    def _schedule_time_label(
+        start_dt: datetime, end_str: str | None, all_day: bool
+    ) -> str:
+        """今日日程时间标签：全天 / 15:00-16:30 / 15:00。
+
+        本地与 Apple 两路用同一格式，早安播报合并去重才能命中同一事件。
+        """
+        if all_day:
+            return "全天"
+        if end_str:
+            end_dt = parse_item_time(end_str)
+            if end_dt:
+                return f"{start_dt.strftime('%H:%M')}-{end_dt.strftime('%H:%M')}"
+        return start_dt.strftime("%H:%M")
+
     async def _get_today_local_schedules_text(
         self, user_id: str, limit: int = 8
     ) -> str:
@@ -1278,24 +1310,16 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         for s in schedules:
             if not s.time:
                 continue
-            try:
-                dt = datetime.fromisoformat(s.time)
-            except Exception:
-                try:
-                    dt = datetime.strptime(s.time, "%Y-%m-%d %H:%M")
-                except Exception:
-                    continue
-            if dt.date() == today:
-                today_items.append((dt, s.title))
+            dt = parse_item_time(s.time)
+            if not dt or dt.date() != today:
+                continue
+            all_day = bool(s.all_day) or len((s.time or "").strip()) == 10
+            time_label = self._schedule_time_label(dt, s.end_time, all_day)
+            today_items.append((dt, f"⏰ {time_label} │ {s.title}"))
         if not today_items:
             return "暂无"
         today_items.sort(key=lambda x: x[0])
-        return "\n".join(
-            [
-                f"⏰ {dt.strftime('%H:%M')} │ {title}"
-                for dt, title in today_items[:limit]
-            ]
-        )
+        return "\n".join([line for _, line in today_items[:limit]])
 
     async def _get_today_apple_calendar_text(self, limit: int = 8) -> str:
         if not self.apple_calendar:
@@ -1315,7 +1339,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                     continue
                 if start_dt.date() != today:
                     continue
-                time_label = "全天" if e.get("all_day") else start_dt.strftime("%H:%M")
+                time_label = self._schedule_time_label(
+                    start_dt, e.get("end"), bool(e.get("all_day"))
+                )
                 rows.append((start_dt, f"⏰ {time_label} │ {summary}"))
             if not rows:
                 return "暂无"
@@ -1376,7 +1402,11 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         detailed_description=(
             "参数说明：\n"
             "- title：string，必填。日程标题/内容。\n"
-            "- datetime_str：string，必填。日期时间，支持「2024-01-15 14:30」「明天9点」「后天下午3点」「今天晚上8点」。\n"
+            "- datetime_str：string，必填。日期时间，支持「2024-01-15 14:30」「明天9点」"
+            "「后天下午3点」「今天晚上8点」；也支持区间「明天9点到11点」，"
+            "以及全天「明天全天」（纯日期如「明天」「2024-01-15」即全天）。\n"
+            "- end_datetime_str：string，可选。区间日程的结束时间（如「11点」"
+            "「2024-01-15 16:30」）；不填则为单时间点（Apple 日历按开始后 1 小时）。\n"
             "- description：string，可选。备注描述。"
         ),
         parameters=[
@@ -1389,8 +1419,15 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             ToolParameterInfo(
                 name="datetime_str",
                 param_type=ToolParamType.STRING,
-                description="日期时间，如「2024-01-15 14:30」「明天9点」「后天下午3点」",
+                description="日期时间，如「2024-01-15 14:30」「明天9点」「明天9点到11点」"
+                "（区间）「明天全天」（全天）",
                 required=True,
+            ),
+            ToolParameterInfo(
+                name="end_datetime_str",
+                param_type=ToolParamType.STRING,
+                description="可选的结束时间（如「11点」「2024-01-15 16:30」），区间日程用",
+                required=False,
             ),
             ToolParameterInfo(
                 name="description",
@@ -1406,6 +1443,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             self,
             kwargs.get("title", ""),
             kwargs.get("datetime_str", ""),
+            kwargs.get("end_datetime_str", ""),
             kwargs.get("description", ""),
             kwargs.get("message"),
         )
@@ -1469,7 +1507,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             "参数说明：\n"
             "- schedule_id：string，必填。日程ID。\n"
             "- title：string，可选。新标题。\n"
-            "- datetime_str：string，可选。新时间。"
+            "- datetime_str：string，可选。新时间，支持区间「明天9点到11点」与"
+            "全天「明天全天」（纯日期即全天）。\n"
+            "- end_datetime_str：string，可选。区间日程的新结束时间，需与 datetime_str 一起给。"
         ),
         parameters=[
             ToolParameterInfo(
@@ -1487,7 +1527,13 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             ToolParameterInfo(
                 name="datetime_str",
                 param_type=ToolParamType.STRING,
-                description="新时间（如「明天9点」）",
+                description="新时间（如「明天9点」「明天9点到11点」「明天全天」）",
+                required=False,
+            ),
+            ToolParameterInfo(
+                name="end_datetime_str",
+                param_type=ToolParamType.STRING,
+                description="区间日程的新结束时间（如「11点」），需与 datetime_str 一起给",
                 required=False,
             ),
         ],
@@ -1499,6 +1545,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             kwargs.get("schedule_id", ""),
             kwargs.get("title", ""),
             kwargs.get("datetime_str", ""),
+            kwargs.get("end_datetime_str", ""),
             kwargs.get("message"),
         )
 

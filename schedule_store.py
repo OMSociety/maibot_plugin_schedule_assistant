@@ -62,6 +62,7 @@ class ScheduleItem:
     type: str = ""
     title: str = ""
     time: str = ""
+    end_time: str | None = None
     recur: str | None = None
     context: str = ""
     enabled: bool = True
@@ -83,6 +84,7 @@ class ScheduleItem:
             "type",
             "title",
             "time",
+            "end_time",
             "recur",
             "context",
             "enabled",
@@ -338,7 +340,7 @@ class ScheduleStore:
                 logger.debug(
                     f"{LOG_PREFIX} 跳过重复 UID: {uid[:16]}... (事件: {evt.get('summary', '无标题')})"
                 )
-                apple_uids.add(uid)
+                # 成员资格由首个实例决定（窗口外被 discard 的不再加回）
                 continue
 
             apple_uids.add(uid)
@@ -362,17 +364,39 @@ class ScheduleStore:
                     )
                     apple_uids.discard(uid)  # 不保留在 apple_uids 中，允许后续删除
                     continue
-                schedule_time = start_dt.strftime("%Y-%m-%d %H:%M")
+                schedule_time = (
+                    start_dt.strftime("%Y-%m-%d")
+                    if evt.get("all_day")
+                    else start_dt.strftime("%Y-%m-%d %H:%M")
+                )
             except (ValueError, TypeError):
                 schedule_time = start_str
+            # 结束时间（区间日程）：全天事件不记 end
+            end_str = None
+            end_raw = evt.get("end") or ""
+            if end_raw and not evt.get("all_day"):
+                try:
+                    end_str = datetime.fromisoformat(end_raw).strftime("%Y-%m-%d %H:%M")
+                except (ValueError, TypeError):
+                    end_str = str(end_raw)
             if uid in uid_map:
                 local = uid_map[uid]
                 if (
                     local.get("title") != evt.get("summary")
                     or local.get("time") != schedule_time
+                    or local.get("end_time") != end_str
                 ):
+                    # 改期（时间/结束时间变化）重置防重标记，让新时间重新提前提醒；
+                    # 旧数据无 end_time 键时首轮补齐不算改期，避免升级后重复提醒
+                    end_changed = (
+                        "end_time" in local and local.get("end_time") != end_str
+                    )
+                    if local.get("time") != schedule_time or end_changed:
+                        local["last_triggered"] = None
                     local["title"] = evt.get("summary", "无标题")
                     local["time"] = schedule_time
+                    local["end_time"] = end_str
+                    local["all_day"] = bool(evt.get("all_day", False))
                     stats["updated"] += 1
             else:
                 schedules.append(
@@ -380,6 +404,7 @@ class ScheduleStore:
                         type="schedule",
                         title=evt.get("summary", "无标题"),
                         time=schedule_time,
+                        end_time=end_str,
                         context=evt.get("description", ""),
                         apple_uid=uid,
                         all_day=evt.get("all_day", False),
@@ -393,8 +418,10 @@ class ScheduleStore:
             if not s.get("apple_uid") or s["apple_uid"] in apple_uids
         ]
         stats["deleted"] = before_count - len(schedules)
-        data[SCHEDULES_KEY] = schedules
-        await self._save_user_data(user_id, data)
+        # 无变化不写盘（提醒扫描每轮都会刷新同步，避免无谓 IO）
+        if stats["added"] or stats["updated"] or stats["deleted"]:
+            data[SCHEDULES_KEY] = schedules
+            await self._save_user_data(user_id, data)
         return stats
 
     async def clear_expired_overrides(self, user_id: str) -> None:

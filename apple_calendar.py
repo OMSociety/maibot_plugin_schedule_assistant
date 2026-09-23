@@ -627,6 +627,7 @@ class AppleCalendar:
         end: datetime | None = None,
         calendar_id: str | None = None,
         description: str = "",
+        all_day: bool = False,
     ) -> str | None:
         if not await self._discover():
             logger.error("[AppleCalendar] CalDAV 未连接，无法创建事件")
@@ -656,17 +657,26 @@ class AppleCalendar:
                 )
         cal_url = f"{self._caldav_base_url}/{resolved_id}/"
         uid = str(uuid.uuid4())
-        dtstart_fmt = start.strftime("%Y%m%dT%H%M%S")
-        dtend_fmt = (end or (start + timedelta(hours=1))).strftime("%Y%m%dT%H%M%S")
         created = datetime.now().strftime("%Y%m%dT%H%M%S")
+        if all_day:
+            # 全天事件：VALUE=DATE，DTEND 为独占次日（RFC 5545）
+            dtstart_fmt = start.strftime("%Y%m%d")
+            dtend_fmt = (end or (start + timedelta(days=1))).strftime("%Y%m%d")
+            dtstart_line = f"DTSTART;VALUE=DATE:{dtstart_fmt}"
+            dtend_line = f"DTEND;VALUE=DATE:{dtend_fmt}"
+        else:
+            dtstart_fmt = start.strftime("%Y%m%dT%H%M%S")
+            dtend_fmt = (end or (start + timedelta(hours=1))).strftime("%Y%m%dT%H%M%S")
+            dtstart_line = f"DTSTART;TZID=Asia/Shanghai:{dtstart_fmt}"
+            dtend_line = f"DTEND;TZID=Asia/Shanghai:{dtend_fmt}"
         lines = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
             "BEGIN:VEVENT",
             f"UID:{uid}",
             f"DTSTAMP:{created}",
-            f"DTSTART;TZID=Asia/Shanghai:{dtstart_fmt}",
-            f"DTEND;TZID=Asia/Shanghai:{dtend_fmt}",
+            dtstart_line,
+            dtend_line,
             f"SUMMARY:{_escape_ics_text(summary)}",
         ]
         esc_desc = _escape_ics_text(description)

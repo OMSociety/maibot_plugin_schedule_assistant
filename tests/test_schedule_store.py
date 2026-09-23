@@ -94,6 +94,24 @@ class TestScheduleItem:
         revived = ScheduleItem.from_dict(item.to_dict())
         assert revived == item
 
+    def test_roundtrip_with_end_time(self):
+        """区间日程的 end_time 字段往返保留"""
+        item = ScheduleItem(
+            type="schedule",
+            title="组会",
+            time="2026-09-08 19:00",
+            end_time="2026-09-08 21:00",
+        )
+        revived = ScheduleItem.from_dict(item.to_dict())
+        assert revived == item
+        assert revived.end_time == "2026-09-08 21:00"
+
+    def test_from_dict_keeps_end_time(self):
+        item = ScheduleItem.from_dict(
+            {"id": "x", "time": "2026-09-08 19:00", "end_time": "2026-09-08 20:00"}
+        )
+        assert item.end_time == "2026-09-08 20:00"
+
 
 class TestStoreRoundTrip:
     """存储 CRUD 往返（tmp_path 真实文件）"""
@@ -213,6 +231,94 @@ class TestSyncFromAppleCalendar:
         assert stats["deleted"] == 1
         titles = {i.title for i in asyncio.run(store.list_all_items("u"))}
         assert titles == {"b", "事件"}
+
+
+class TestSyncEndTimeAndReschedule:
+    """区间/全天同步与改期防重重置"""
+
+    _future_start = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%dT10:00:00")
+    _future_end = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%dT11:30:00")
+
+    def _evt(self, uid, title="事件", start=None, end=None, all_day=False):
+        evt = {"uid": uid, "summary": title, "start": start or self._future_start}
+        if end:
+            evt["end"] = end
+        if all_day:
+            evt["all_day"] = True
+        return evt
+
+    def _store(self, tmp_path):
+        store = ScheduleStore()
+        store.set_data_dir(tmp_path)
+        return store
+
+    def test_end_time_stored(self, tmp_path):
+        store = self._store(tmp_path)
+        asyncio.run(
+            store.sync_from_apple_calendar("u", [self._evt("u1", end=self._future_end)])
+        )
+        item = asyncio.run(store.list_all_items("u"))[0]
+        expected = datetime.fromisoformat(self._future_end).strftime("%Y-%m-%d %H:%M")
+        assert item.end_time == expected
+
+    def test_all_day_stored_as_date_only(self, tmp_path):
+        """全天事件 time 存 date-only（与全天判定的格式检测对齐）"""
+        store = self._store(tmp_path)
+        day = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%dT00:00:00")
+        asyncio.run(
+            store.sync_from_apple_calendar(
+                "u", [self._evt("u1", start=day, all_day=True)]
+            )
+        )
+        item = asyncio.run(store.list_all_items("u"))[0]
+        assert item.all_day is True
+        assert item.time == day[:10]
+
+    def test_reschedule_resets_last_triggered(self, tmp_path):
+        """改期（时间变化）重置防重标记，新时间重新提前提醒"""
+        store = self._store(tmp_path)
+        asyncio.run(store.sync_from_apple_calendar("u", [self._evt("u1")]))
+        item = asyncio.run(store.list_all_items("u"))[0]
+        item.last_triggered = datetime.now().isoformat()
+        asyncio.run(store.update_item("u", item))
+
+        new_start = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%dT10:00:00")
+        stats = asyncio.run(
+            store.sync_from_apple_calendar("u", [self._evt("u1", start=new_start)])
+        )
+        assert stats["updated"] == 1
+        assert asyncio.run(store.list_all_items("u"))[0].last_triggered is None
+
+    def test_title_change_keeps_last_triggered(self, tmp_path):
+        """仅标题变化不算改期，防重标记保留"""
+        store = self._store(tmp_path)
+        asyncio.run(store.sync_from_apple_calendar("u", [self._evt("u1")]))
+        item = asyncio.run(store.list_all_items("u"))[0]
+        item.last_triggered = datetime.now().isoformat()
+        asyncio.run(store.update_item("u", item))
+
+        stats = asyncio.run(
+            store.sync_from_apple_calendar("u", [self._evt("u1", title="改名了")])
+        )
+        assert stats["updated"] == 1
+        assert asyncio.run(store.list_all_items("u"))[0].last_triggered is not None
+
+    def test_unchanged_sync_skips_save(self, tmp_path):
+        """无变化的同步不写盘（提醒扫描每轮都会刷新同步）"""
+        store = self._store(tmp_path)
+        asyncio.run(store.sync_from_apple_calendar("u", [self._evt("u1")]))
+
+        saves = []
+        orig = store._save_all
+
+        async def counting(*args, **kwargs):
+            saves.append(1)
+            return await orig(*args, **kwargs)
+
+        store._save_all = counting
+        stats = asyncio.run(store.sync_from_apple_calendar("u", [self._evt("u1")]))
+        assert stats == {"added": 0, "updated": 0, "deleted": 0}
+        assert saves == []
 
 
 class TestClearExpiredOverrides:

@@ -6,7 +6,7 @@
 
 **贴心日程管家** —— 早安播报 · 日程智能提醒 · 习惯提醒 · Apple 日历同步 · Notion 待办
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/OMSociety/maibot_plugin_schedule_assistant)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/OMSociety/maibot_plugin_schedule_assistant)
 [![MaiBot](https://img.shields.io/badge/MaiBot-%E2%89%A51.0-green.svg)](https://github.com/Mai-with-u/MaiBot)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-orange.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/OMSociety/maibot_plugin_schedule_assistant)](https://github.com/OMSociety/maibot_plugin_schedule_assistant/stargazers)
@@ -25,9 +25,9 @@
 | 特性 | 说明 |
 |------|------|
 | 🌅 **早安播报** | 每天固定时间推送（天气 / 今日日程 / Notion 待办），Markdown 精美排版 |
-| 📌 **日程智能提醒** | LLM 生成自然语言提醒，日程临近时**百分百推送**（固定格式直发） |
+| 📌 **日程智能提醒** | 日程临近时由 Maisaka **拟人化开口**（注入回复生命周期），覆盖本地日程与 Apple 日历事件 |
 | 🚿 **习惯提醒** | 洗澡 / 睡觉 / 喝水，由 Maisaka 基于人格**拟人化开口** |
-| 🗓️ **日程管理** | LLM 自然语言创建 / 删除 / 查询 / 修改日程（明天9点、后天下午3点都能懂） |
+| 🗓️ **日程管理** | LLM 自然语言创建 / 删除 / 查询 / 修改日程（支持时间区间「9点到11点」与全天日程） |
 | 🔄 **Apple 日历同步** | iCloud CalDAV 双向同步（读取 / 写入 / 删除事件） |
 | 📋 **Notion 待办** | 待办同步进早安播报（经第三方 Maton 网关中转） |
 
@@ -38,14 +38,14 @@
 ### 早安播报（固定格式）
 每天 `morning_report_time` 推送：称呼语 + 日期 + 天气 + 今日日程表格 + 待办表格，Markdown 排版。
 
-### 日程提醒（固定格式）
-日程临近时（提前 `schedule_reminder_minutes` 分钟）LLM 生成提醒文本并直接发送。
+### 日程提醒（Maisaka 拟人开口）
+日程临近时（提前 `schedule_reminder_minutes` 分钟），本地日程与 Apple 日历事件统一调用 `ctx.maisaka.proactive.trigger()`，把提醒意图注入回复生命周期，由 Maisaka 基于人格自然开口；同一轮的多个事件合并为一次提醒。
 
 ### 习惯提醒（Maisaka 拟人开口）
 洗澡 / 睡觉 / 喝水到点后，调用 `ctx.maisaka.proactive.trigger()` 让 Maisaka 基于人格自己决定怎么说、说多少。
 
 ### 日程管理（LLM 工具）
-直接说"明天9点开会" / "删掉后天的组会" / "我最近有什么安排"，bot 自动调工具。
+直接说"明天9点开会" / "明天9点到11点开组会" / "后天全天团建" / "删掉后天的组会"，bot 自动调工具。时间支持单点、区间、全天三种形态。
 
 ---
 
@@ -87,9 +87,9 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | 基础设置 | `persona_hint` | string | `""` | 可选语气补充（人格本体由 MaiBot 全局提供） |
 | 基础设置 | `user_nickname` | string | `""` | 播报称呼（留空用「主人」） |
 | 基础设置 | `user_ids` | list | `[]` | 接收提醒的用户（每项 `platform:裸ID`，如 `qq:123456`） |
-| 日程提醒 | `enable_schedule_reminder` | bool | `false` | 开启日程智能提醒 |
+| 日程提醒 | `enable_schedule_reminder` | bool | `false` | 开启日程与 Apple 日历事件的提前提醒（Maisaka 拟人开口） |
 | 日程提醒 | `schedule_reminder_minutes` | int | `10` | 提前提醒分钟数 |
-| 日程提醒 | `schedule_reminder_check_interval` | int | `5` | 扫描间隔（分钟，最小 2） |
+| 日程提醒 | `schedule_reminder_check_interval` | int | `5` | 扫描间隔（分钟，最小 2，建议不大于提前提醒分钟数） |
 | 习惯提醒 | `enable_morning_report` | bool | `true` | 早安播报开关 |
 | 习惯提醒 | `morning_report_time` | string | `09:00` | 早安时间 |
 | 习惯提醒 | `enable_bath_reminder` | bool | `true` | 洗澡提醒（Maisaka） |
@@ -106,8 +106,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | 外部服务 | `maton_api_key` / `notion_db_ids` | string/list | `""`/`[]` | Notion 待办（经第三方 Maton 网关，密钥发往该第三方） |
 | 外部服务 | `weather_api_key` / `weather_city` | string | `""`/`北京` | 心知天气 |
 | 消息渲染 | `markdown_enabled` | bool | `true` | Markdown 渲染（QQ 协议适配器走 qq_markdown 结构化消息） |
-| 提醒 Prompt | `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
-| 提醒 Prompt | `prompt_schedule` | string | `""` | 日程提醒模板。占位符：`{item_title} {time_label} {ahead_label} {item_context}` |
+| 早安播报模板 | `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
 
 ---
 
@@ -131,15 +130,23 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 | 工具 | 说明 | 关键参数 |
 |:-----|:-----|:---------|
-| `create_schedule` | 创建日程 | title / datetime_str / description |
+| `create_schedule` | 创建日程（单点 / 区间 / 全天） | title / datetime_str / end_datetime_str / description |
 | `delete_schedule` | 删除日程 | schedule_id / title_keyword |
 | `list_schedules` | 查看日程 | date（缺省今天） |
-| `update_schedule` | 修改日程 | schedule_id / title / datetime_str |
+| `update_schedule` | 修改日程（单点 / 区间 / 全天） | schedule_id / title / datetime_str / end_datetime_str |
 
 ```
 用户: 帮我记一个日程，明天下午3点开组会，记得带电脑
 🤖 → create_schedule(title="组会", datetime_str="明天下午3点", description="记得带电脑")
     ✅ 已创建日程「组会」，时间：09-02 15:00
+
+用户: 明天9点到11点开组会
+🤖 → create_schedule(title="组会", datetime_str="明天9点到11点")
+    ✅ 已创建日程「组会」，时间：09-02 09:00-11:00
+
+用户: 后天全天团建
+🤖 → create_schedule(title="团建", datetime_str="后天全天")
+    ✅ 已创建日程「团建」，时间：09-03 全天
 
 用户: 我下周有什么安排
 🤖 → list_schedules(date="7")
@@ -153,13 +160,16 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 ## ⚠️ 常见问题
 
 **Q：提醒没收到？**
-A：主动推送通过 `user_ids`（`platform:裸ID`）定位你的**私聊流**（插件用 `get_stream_by_user_id` 取到 Session ID 再发送）。所以：
+A：主动推送通过 `user_ids`（`platform:裸ID`）定位你的**私聊流**（插件用 `get_stream_by_user_id` 取到 Session ID 再发送，Maisaka 提醒同样依赖这个聊天流）。所以：
 - `user_ids` 填 `platform:裸ID`（如 `qq:123456`，`qq`=NapCat）；
 - 你**必须先私聊过 bot**（才有聊天流）；
 - 群聊场景暂不支持主动推送（可后续扩展 `get_stream_by_group_id`）。
 
-**Q：为什么洗澡/睡觉/喝水提醒有时没响？**
-A：这三类提醒由 Maisaka 拟人化开口（`proactive.trigger`），Maisaka 会根据人格和语境决定是否说话——**可能选择不打扰**。这是设计取舍；早安播报和日程提醒是固定格式直发，**保证送达**。
+**Q：为什么洗澡/睡觉/喝水/日程提醒有时没响？**
+A：这几类提醒由 Maisaka 拟人化开口（`proactive.trigger`，注入回复生命周期），Maisaka 会根据人格和语境决定是否说话——**可能选择不打扰**，不保证每次都开口。这是设计取舍；早安播报是固定格式直发，**保证送达**。
+
+**Q：Apple 日历的日程也能提前提醒吗？**
+A：能，需要同时满足：① `enable_schedule_reminder` 开启并设好提前量；② `enable_apple_calendar_sync` 开启并配好 Apple ID / App 专用密码。每轮提醒扫描前会触发一次同步（300 秒内的重复拉取走缓存），手机上新加或改期的事件也能赶上提前提醒；事件改期后会重新提醒一次。
 
 **Q：Apple 日历怎么配？**
 A：需要 Apple ID + **App 专用密码**（appleid.apple.com → 安全性 → App 专用密码），填 `apple_username / apple_app_password`。

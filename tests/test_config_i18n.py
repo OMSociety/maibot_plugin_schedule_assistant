@@ -67,7 +67,6 @@ PURE_TECH = {
     "qq:123456",
     "Apple ID",
     "{username} {date} {weekday} {weather_current} {agenda}…",
-    "{item_title} {time_label} {ahead_label}…",
 }
 # 豁免：中日同形词且日语本身合法（最小=さいしょう）
 WHITELIST_EQ = {"最小 2"}

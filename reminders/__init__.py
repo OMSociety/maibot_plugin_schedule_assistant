@@ -1,10 +1,15 @@
 """提醒服务层"""
 
 from .briefing import BriefingReminder
-from .schedule import ScheduleReminder, check_and_trigger_schedule_reminder
+from .schedule import (
+    build_schedule_reminder_intent,
+    collect_due_schedule_items,
+    parse_item_time,
+)
 
 __all__ = [
     "BriefingReminder",
-    "ScheduleReminder",
-    "check_and_trigger_schedule_reminder",
+    "build_schedule_reminder_intent",
+    "collect_due_schedule_items",
+    "parse_item_time",
 ]
