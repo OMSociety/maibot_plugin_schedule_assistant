@@ -2,7 +2,7 @@
 
 <img src="https://raw.githubusercontent.com/OMSociety/maibot_plugin_schedule_assistant/main/logo.png" width="120" alt="ScheduleAssistant Logo" />
 
-# 📅 Schedule Assistant 日程提醒助手
+# Schedule Assistant 日程提醒助手
 
 **贴心日程管家** —— 早安播报 · 日程智能提醒 · 习惯提醒 · Apple 日历同步 · Notion 待办
 
@@ -12,28 +12,28 @@
 [![Stars](https://img.shields.io/github/stars/OMSociety/maibot_plugin_schedule_assistant)](https://github.com/OMSociety/maibot_plugin_schedule_assistant/stargazers)
 [![Issues](https://img.shields.io/github/issues/OMSociety/maibot_plugin_schedule_assistant)](https://github.com/OMSociety/maibot_plugin_schedule_assistant/issues)
 
-[✨ 核心特性](#-核心特性) • [📖 功能概览](#-功能概览) • [🚀 快速开始](#-快速开始) • [⚙️ 配置项说明](#️-配置项说明) • [🛠️ LLM 可调用工具](#️-llm-可调用工具) • [⚠️ 常见问题](#️-常见问题) • [📝 更新日志](CHANGELOG.md)
+[核心特性](#核心特性) • [功能概览](#功能概览) • [快速开始](#快速开始) • [配置项说明](#配置项说明) • [LLM 可调用工具](#llm-可调用工具) • [常见问题](#常见问题) • [更新日志](CHANGELOG.md)
 
 </div>
 
-> 🎨 本项目由 AI 编写 · 由 AstrBot 插件 [OMSociety/astrbot_plugin_schedule_assistant](https://github.com/OMSociety/astrbot_plugin_schedule_assistant) 迁移而来
+> 本项目由 AI 编写 · 由 AstrBot 插件 [OMSociety/astrbot_plugin_schedule_assistant](https://github.com/OMSociety/astrbot_plugin_schedule_assistant) 迁移而来
 
 ---
 
-## ✨ 核心特性
+## 核心特性
 
 | 特性 | 说明 |
 |------|------|
-| 🌅 **早安播报** | 每天固定时间推送（天气 / 今日日程 / Notion 待办 / 熬夜检测），Markdown 精美排版 |
-| 📌 **日程智能提醒** | 日程临近时由 Maisaka **拟人化开口**（注入回复生命周期），覆盖本地日程与 Apple 日历事件 |
-| 🚿 **习惯提醒** | 洗澡 / 睡觉 / 喝水，由 Maisaka 基于人格**拟人化开口** |
-| 🗓️ **日程管理** | LLM 自然语言创建 / 删除 / 查询 / 修改日程（支持时间区间「9点到11点」与全天日程） |
-| 🔄 **Apple 日历同步** | iCloud CalDAV 双向同步（读取 / 写入 / 删除事件） |
-| 📋 **Notion 待办** | 待办同步进早安播报（经第三方 Maton 网关中转） |
+| **早安播报** | 每天固定时间推送（天气 / 今日日程 / Notion 待办 / 熬夜检测），Markdown 精美排版 |
+| **日程智能提醒** | 日程临近时由 Maisaka **拟人化开口**（注入回复生命周期），覆盖本地日程与 Apple 日历事件 |
+| **习惯提醒** | 洗澡 / 睡觉 / 喝水，由 Maisaka 基于人格**拟人化开口** |
+| **日程管理** | LLM 自然语言创建 / 删除 / 查询 / 修改日程（支持时间区间「9点到11点」与全天日程） |
+| **Apple 日历同步** | iCloud CalDAV 双向同步（读取 / 写入 / 删除事件） |
+| **Notion 待办** | 待办同步进早安播报（经第三方 Maton 网关中转） |
 
 ---
 
-## 📖 功能概览
+## 功能概览
 
 ### 早安播报（固定格式）
 每天 `morning_report_time` 推送：称呼语 + 日期 + 天气 + 今日日程表格 + 待办表格，Markdown 排版。
@@ -49,25 +49,17 @@
 
 ---
 
-## 🚀 快速开始
+## 快速开始
 
 ### 第一步：安装
 
-**方式一：插件市场**
-- MaiBot WebUI → 插件市场 → 搜索 `schedule_assistant`
-
-**方式二：手动安装**
-- 克隆仓库到 MaiBot 的 `plugins/` 目录：
-
-```bash
-git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plugins/maibot_plugin_schedule_assistant
-```
+MaiBot WebUI → 插件市场 → 搜索 `schedule_assistant`
 
 ### 第二步：配置
 
 1. **基础设置**：填写 `user_ids`（接收提醒的用户 ID 列表）
 
-> 🔑 **`user_ids` 填什么**：每项填 **`platform:裸ID`**，和全局 `operator`/`permission` 同一种格式（如 `qq:123456`）。`qq`=NapCat（QQ 协议）；接其它适配器填它上报的平台名。自包含、可混平台。
+> **`user_ids` 填什么**：每项填 **`platform:裸ID`**，和全局 `operator`/`permission` 同一种格式（如 `qq:123456`）。`qq`=NapCat（QQ 协议）；接其它适配器填它上报的平台名。自包含、可混平台。
 2. **日程提醒**：开启 `enable_schedule_reminder`，设提前量
 3. **习惯提醒**：默认开启，可调时间
 4. **（可选）外部服务**：心知天气 Key（早安播报天气）、Notion、Apple 日历
@@ -80,7 +72,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 ---
 
-## ⚙️ 配置项说明
+## 配置项说明
 
 | 分组 | 配置项 | 类型 | 默认值 | 说明 |
 |:-----|:-------|:-----|:-------|:-----|
@@ -110,13 +102,13 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 ---
 
-## 🔒 数据安全与隐私
+## 数据安全与隐私
 
 ### WebCal 订阅地址安全（防 SSRF）
 
-> 💡 `webcal_urls` 只接受**公网**的 `http://` 或 `https://` 订阅地址（`webcal://` 自动转 `https://`）。插件会拒绝 `localhost`、内网（如 `192.168.x` / `10.x`）、链路本地、云元数据（`169.254.169.254`）等地址（防 SSRF）。请勿填写内网或本机地址。
+> **提示：**`webcal_urls` 只接受**公网**的 `http://` 或 `https://` 订阅地址（`webcal://` 自动转 `https://`）。插件会拒绝 `localhost`、内网（如 `192.168.x` / `10.x`）、链路本地、云元数据（`169.254.169.254`）等地址（防 SSRF）。请勿填写内网或本机地址。
 >
-> ⚠️ 安全边界：对**域名**仅做主机名黑名单校验，**请求前不解析 DNS**，因此理论上仍存在 DNS rebinding（域名在校验通过后被解析到内网地址）的残余风险；对 **IP 字面量**则会完整校验私网 / 环回 / 链路本地 / 保留段。若部署环境对安全要求较高，建议在网络层（防火墙 / 出站代理白名单）再挡一道。
+> **注意：**安全边界：对**域名**仅做主机名黑名单校验，**请求前不解析 DNS**，因此理论上仍存在 DNS rebinding（域名在校验通过后被解析到内网地址）的残余风险；对 **IP 字面量**则会完整校验私网 / 环回 / 链路本地 / 保留段。若部署环境对安全要求较高，建议在网络层（防火墙 / 出站代理白名单）再挡一道。
 
 ### Notion 待办经第三方 Maton 网关中转（非直连）
 
@@ -126,7 +118,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 - 也就是说，**这个 Key（及其对应的 Notion 访问权限）会离开你的机器，交给 Maton 这个第三方**；
 - 因此，Maton 能访问插件为拉取待办而查询的数据：你配置的「事务」「阅读」数据库里的**标题、状态（进度）、截止日期**等字段内容。
 
-## 🛠️ LLM 可调用工具
+## LLM 可调用工具
 
 | 工具 | 说明 | 关键参数 |
 |:-----|:-----|:---------|
@@ -135,7 +127,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 | `list_schedules` | 查看日程 | date（缺省今天） |
 | `update_schedule` | 修改日程（单点 / 区间 / 全天） | schedule_id / title / datetime_str / end_datetime_str |
 
-> ⏱️ **时间写法**：数字/ISO 格式（`2024-01-15 14:30`、`2024-01-15 09:00-11:00`、`2024-01-16`）或中文口语（「明天9点」「明天9点到11点」「明天全天」）；纯日期即全天，两端纯日期的区间（「明天到后天」）取开始日。
+> **时间写法**：数字/ISO 格式（`2024-01-15 14:30`、`2024-01-15 09:00-11:00`、`2024-01-16`）或中文口语（「明天9点」「明天9点到11点」「明天全天」）；纯日期即全天，两端纯日期的区间（「明天到后天」）取开始日。
 
 ```
 用户: 帮我记一个日程，明天下午3点开组会，记得带电脑
@@ -159,7 +151,7 @@ git clone https://github.com/OMSociety/maibot_plugin_schedule_assistant.git plug
 
 ---
 
-## ⚠️ 常见问题
+## 常见问题
 
 **Q：提醒没收到？**
 A：主动推送通过 `user_ids`（`platform:裸ID`）定位你的**私聊流**（插件用 `get_stream_by_user_id` 取到 Session ID 再发送，Maisaka 提醒同样依赖这个聊天流）。所以：
@@ -179,25 +171,15 @@ A：需要 Apple ID + **App 专用密码**（appleid.apple.com → 安全性 →
 **Q：数据存在哪？**
 A：MaiBot 插件数据目录 `data/plugins/omsociety.schedule-assistant/schedule_data.json`。
 
----
+## 支持与致谢
 
-## ⭐ 支持本项目
-
-如果这个插件对你有帮助，欢迎点亮 Star ⭐，有问题和建议请提交 [Issue](https://github.com/OMSociety/maibot_plugin_schedule_assistant/issues) 或 [Pull Request](https://github.com/OMSociety/maibot_plugin_schedule_assistant/pulls)。
-
-## 🙏 致谢
+如果这个插件对你有帮助，欢迎点亮 Star，有问题和建议请提交 [Issue](https://github.com/OMSociety/maibot_plugin_schedule_assistant/issues) 或 [Pull Request](https://github.com/OMSociety/maibot_plugin_schedule_assistant/pulls)。
 
 - [MaiBot](https://github.com/Mai-with-u/MaiBot) 开源聊天机器人框架
 - [AstrBot](https://github.com/AstrBotDevs/AstrBot) 上游 AstrBot 插件框架
 
----
-
-## 📜 许可证
+## 许可证与作者
 
 本项目采用 **AGPL-3.0** 开源协议。
-
----
-
-## 👤 作者
 
 [@OMSociety](https://github.com/OMSociety)
