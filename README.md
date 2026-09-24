@@ -74,31 +74,63 @@ MaiBot WebUI → 插件市场 → 搜索 `schedule_assistant`
 
 ## 配置项说明
 
-| 分组 | 配置项 | 类型 | 默认值 | 说明 |
-|:-----|:-------|:-----|:-------|:-----|
-| 基础设置 | `persona_hint` | string | `""` | 可选语气补充（人格本体由 MaiBot 全局提供） |
-| 基础设置 | `user_nickname` | string | `""` | 播报称呼（留空用「主人」） |
-| 基础设置 | `user_ids` | list | `[]` | 接收提醒的用户（每项 `platform:裸ID`，如 `qq:123456`） |
-| 日程提醒 | `enable_schedule_reminder` | bool | `false` | 开启日程与 Apple 日历事件的提前提醒（Maisaka 拟人开口） |
-| 日程提醒 | `schedule_reminder_minutes` | int | `10` | 提前提醒分钟数 |
-| 日程提醒 | `schedule_reminder_check_interval` | int | `5` | 扫描间隔（分钟，最小 2，建议不大于提前提醒分钟数） |
-| 习惯提醒 | `enable_morning_report` | bool | `true` | 早安播报开关 |
-| 习惯提醒 | `morning_report_time` | string | `09:00` | 早安时间 |
-| 习惯提醒 | `enable_bath_reminder` | bool | `true` | 洗澡提醒（Maisaka） |
-| 习惯提醒 | `bath_time` | string | `22:00` | 洗澡时间 |
-| 习惯提醒 | `enable_sleep_reminder` | bool | `true` | 睡觉提醒（Maisaka） |
-| 习惯提醒 | `sleep_time` | string | `23:00` | 睡觉时间 |
-| 习惯提醒 | `enable_water_reminder` | bool | `true` | 喝水提醒（Maisaka） |
-| 习惯提醒 | `water_interval` | int | `90` | 喝水间隔（分钟） |
-| 习惯提醒 | `water_start_time` / `water_end_time` | string | `09:30`/`21:30` | 喝水时段 |
-| 日历同步 | `enable_apple_calendar_sync` | bool | `false` | Apple 日历双向同步 |
-| 日历同步 | `apple_calendar_sync_interval` | int | `30` | 同步间隔（分钟） |
-| 日历同步 | `apple_username` / `apple_app_password` / `apple_calendar_id` | string | `""` | Apple ID / App 专用密码 / 日历 ID |
-| 日历同步 | `webcal_urls` | list | `[]` | WebCal 共享链接 |
-| 外部服务 | `maton_api_key` / `notion_db_ids` | string/list | `""`/`[]` | Notion 待办（经第三方 Maton 网关，密钥发往该第三方） |
-| 外部服务 | `weather_api_key` / `weather_city` | string | `""`/`北京` | 心知天气 |
-| 消息渲染 | `markdown_enabled` | bool | `true` | Markdown 渲染（QQ 协议适配器走 qq_markdown 结构化消息） |
-| 早安播报模板 | `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
+### 基础设置
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|:------|:-----|:-------|:-----|
+| `persona_hint` | string | `""` | 可选语气补充（人格本体由 MaiBot 全局提供） |
+| `user_nickname` | string | `""` | 播报称呼（留空用「主人」） |
+| `user_ids` | list | `[]` | 接收提醒的用户（每项 `platform:裸ID`，如 `qq:123456`） |
+
+### 日程提醒
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|:------|:-----|:-------|:-----|
+| `enable_schedule_reminder` | bool | `false` | 开启日程与 Apple 日历事件的提前提醒（Maisaka 拟人开口） |
+| `schedule_reminder_minutes` | int | `10` | 提前提醒分钟数 |
+| `schedule_reminder_check_interval` | int | `5` | 扫描间隔（分钟，最小 2，建议不大于提前提醒分钟数） |
+
+### 习惯提醒
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|:------|:-----|:-------|:-----|
+| `enable_morning_report` | bool | `true` | 早安播报开关 |
+| `morning_report_time` | string | `09:00` | 早安时间 |
+| `enable_bath_reminder` | bool | `true` | 洗澡提醒（Maisaka） |
+| `bath_time` | string | `22:00` | 洗澡时间 |
+| `enable_sleep_reminder` | bool | `true` | 睡觉提醒（Maisaka） |
+| `sleep_time` | string | `23:00` | 睡觉时间 |
+| `enable_water_reminder` | bool | `true` | 喝水提醒（Maisaka） |
+| `water_interval` | int | `90` | 喝水间隔（分钟） |
+| `water_start_time` / `water_end_time` | string | `09:30`/`21:30` | 喝水时段 |
+
+### 日历同步
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|:------|:-----|:-------|:-----|
+| `enable_apple_calendar_sync` | bool | `false` | Apple 日历双向同步 |
+| `apple_calendar_sync_interval` | int | `30` | 同步间隔（分钟） |
+| `apple_username` / `apple_app_password` / `apple_calendar_id` | string | `""` | Apple ID / App 专用密码 / 日历 ID |
+| `webcal_urls` | list | `[]` | WebCal 共享链接 |
+
+### 外部服务
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|:------|:-----|:-------|:-----|
+| `maton_api_key` / `notion_db_ids` | string/list | `""`/`[]` | Notion 待办（经第三方 Maton 网关，密钥发往该第三方） |
+| `weather_api_key` / `weather_city` | string | `""`/`北京` | 心知天气 |
+
+### 消息渲染
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|:------|:-----|:-------|:-----|
+| `markdown_enabled` | bool | `true` | Markdown 渲染（QQ 协议适配器走 qq_markdown 结构化消息） |
+
+### 早安播报模板
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|:------|:-----|:-------|:-----|
+| `prompt_morning` | string | `""` | 早安播报模板。占位符：`{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}` |
 
 ---
 
