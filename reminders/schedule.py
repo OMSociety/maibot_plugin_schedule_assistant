@@ -1,9 +1,9 @@
 """
 日程提醒模块（MaiBot 插件版）
 
-只负责「谁该被提醒、何时算到点」：扫描 schedule 类型日程、判定提前量窗口、
-写防重标记，并把到点事件打包成 intent 文本。habit 类型（洗澡/睡觉/喝水）由
-独立定时任务处理，全天事件不提前提醒，均不在此扫描。
+只负责「谁该被提醒、何时算到点」：扫描 schedule 类型日程、判定提前量窗口，
+按调用方确认的触发结果写防重标记，并把到点事件打包成 intent 文本。habit 类型
+（洗澡/睡觉/喝水）由独立定时任务处理，全天事件不提前提醒，均不在此扫描。
 
 措辞与发送不在本模块：插件侧把 intent 注入 Maisaka 回复生命周期拟人开口
 （见 plugin.py 的 _schedule_reminder_scan / _schedule_reminder_maisaka）。
@@ -58,8 +58,9 @@ async def collect_due_schedule_items(
     schedule_store,
     user_id: str,
     minutes_before: int = 15,
+    mark_triggered: bool = False,
 ) -> list[dict[str, Any]]:
-    """选出即将开始的日程（仅 schedule 类型），并写防重标记。
+    """选出即将开始的日程（仅 schedule 类型）。
 
     提醒时机：开始前 minutes_before 分钟内（0 < 剩余分钟 <= minutes_before）
     触发一次；整个提前量窗口都有效，配合任意扫描间隔都不会漏掉窗口内的事件。
@@ -67,6 +68,11 @@ async def collect_due_schedule_items(
     防重：last_triggered 持久化，同一事件只提醒一次（重启不重发）；事件改期会
     重置该标记——Apple 同步（schedule_store.sync_from_apple_calendar）与工具
     修改（tools/schedule_tools.update_schedule）同口径。
+
+    mark_triggered 默认 False（本函数只挑选，落盘由调用方确认送达后调
+    mark_schedule_items_triggered）：先落标记再触发时，「用户当前不在活跃
+    stream」这类最常见失败会让该事件本期永久不再提醒。只有挑选即等于已提醒、
+    没有回调环节的调用方才显式传 True。
 
     habit（洗澡/睡觉/喝水）、全天事件、已停用条目不提醒。
 
@@ -108,10 +114,32 @@ async def collect_due_schedule_items(
             f"{LOG_PREFIX} 日程到点提醒: {item.title} ({item.time}) "
             f"剩余 {int(minutes_until)} 分钟"
         )
-        item.last_triggered = now.isoformat()
-        await schedule_store.update_item(user_id, item)
+        if mark_triggered:
+            item.last_triggered = now.isoformat()
+            await schedule_store.update_item(user_id, item)
 
     return due
+
+
+async def mark_schedule_items_triggered(
+    schedule_store,
+    user_id: str,
+    items: list[dict[str, Any]],
+) -> None:
+    """触发成功后回写防重标记（配合 collect_due_schedule_items(mark_triggered=False)）。
+
+    只按 item_id 打标，且已有标记的不覆盖（幂等，保留先落盘的时间戳）——
+    这次提醒已就这条日程发生过，同一条目不再因为回写时机不同而重复提醒。
+    """
+    now_iso = datetime.now().isoformat()
+    item_ids = {it.get("item_id") for it in items}
+    for item in await schedule_store.list_all_items(user_id):
+        if item.id not in item_ids:
+            continue
+        if item.last_triggered:
+            continue
+        item.last_triggered = now_iso
+        await schedule_store.update_item(user_id, item)
 
 
 def build_schedule_reminder_intent(items: list[dict[str, Any]]) -> str:

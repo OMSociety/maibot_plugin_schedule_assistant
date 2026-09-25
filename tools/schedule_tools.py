@@ -358,7 +358,7 @@ async def create_schedule(
                 )
                 if created_uid:
                     item.apple_uid = created_uid
-                apple_msg = "，已同步到 Apple 日历"
+                    apple_msg = "，已同步到 Apple 日历"
         except Exception as e:
             logger.warning(f"Apple 日历写入失败: {e}")
 
@@ -443,17 +443,17 @@ async def list_schedules(plugin, date: str, message: dict | None) -> str:
         )
 
         # date 参数：YYYY-MM-DD 或 days 数字（如 "7"）
+        # days 必须 >=1：days=0 会让 future=None，下面的 now <= dt <= future 直接
+        # TypeError（对照 date=None 走 else 分支恒为 7 天）
         days = 7
+        date_filter = None
         if date:
             d = (date or "").strip()
             if d.isdigit():
-                days = int(d)
-                date_filter = None
+                days = max(1, int(d))
             else:
                 date_filter = d
                 days = 0
-        else:
-            date_filter = None
 
         now = datetime.now()
         future = now + timedelta(days=days) if days > 0 else None
@@ -577,7 +577,47 @@ async def update_schedule(
             changes.append(f"时间改为{_format_when_label(start, end, all_day)}")
 
         await plugin.store.update_item(user_id, target)
-        return f"已修改日程：{', '.join(changes)} ✅"
+
+        # 回写 Apple 日历：本地改动不回写，下一轮同步会按 Apple 的
+        # title/time/end_time 反写本地（schedule_store 的改期口径），改动被静默还原。
+        # 取 target.time/end_time（已落库的新值）而非重解析——重解析只得到单点
+        # 时间，会把区间的结束时间丢掉
+        apple_msg = ""
+        if target.apple_uid and (
+            plugin.config.calendar_sync.enable_apple_calendar_sync
+            and plugin.apple_calendar
+        ):
+            start = parse_item_time(target.time)
+            if start is None:
+                logger.warning(f"Apple 日历回写跳过（本地时间无法解析）: {target.time}")
+            else:
+                end = parse_item_time(target.end_time) if target.end_time else None
+                try:
+                    ok = await plugin.apple_calendar.update_event(
+                        target.apple_uid,
+                        summary=target.title,
+                        start=start,
+                        end=end,
+                        description=target.context or "",
+                        all_day=bool(target.all_day),
+                    )
+                except Exception as e:
+                    ok = False
+                    logger.warning(f"Apple 日历回写异常: {e}")
+                if ok:
+                    apple_msg = "，已更新 Apple 日历"
+                else:
+                    # 取舍：写回失败时只把 apple_uid 置空（脱离 Apple 同步），
+                    # 让本地改动在下一轮同步中存活。代价是 Apple 上残留一条旧事件
+                    # 并被同步重新拉回本地、成为重复条目 —— 人工删掉即可；反过来
+                    # 保留 apple_uid 会让旧值在下一轮同步中把改动直接覆盖掉
+                    target.apple_uid = None
+                    await plugin.store.update_item(user_id, target)
+                    logger.warning(
+                        f"Apple 日历回写失败，已解除 Apple 同步以免改动被覆盖: {target.title}"
+                    )
+
+        return f"已修改日程：{', '.join(changes)} ✅{apple_msg}"
     except Exception as e:
         logger.error(f"修改日程失败: {e}")
         return f"修改日程失败: {e}"

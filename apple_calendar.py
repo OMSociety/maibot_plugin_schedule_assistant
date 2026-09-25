@@ -75,7 +75,37 @@ class AppleCalendar:
         timeout: int = 30,
         retries: int = 3,
     ) -> str | None:
-        """异步 HTTP 请求（aiohttp），带重试"""
+        """异步 HTTP 请求（aiohttp），带重试；只返回响应体文本。
+
+        仅需正文的读取路径用这个包装；写路径要判成败必须用
+        _request_with_status（<500 时响应体同样非 None，正文无法区分
+        201/204 与 401/403）。
+        """
+        _status, text = await self._request_with_status(
+            url,
+            method=method,
+            data=data,
+            headers=headers,
+            timeout=timeout,
+            retries=retries,
+        )
+        return text
+
+    async def _request_with_status(
+        self,
+        url: str,
+        method: str = "GET",
+        data: bytes | None = None,
+        headers: dict | None = None,
+        timeout: int = 30,
+        retries: int = 3,
+    ) -> tuple[int, str | None]:
+        """异步 HTTP 请求（aiohttp），带重试；返回 (状态码, 响应体)。
+
+        网络失败（ClientError / TimeoutError）返回 (0, None) —— 状态码 0
+        不是任何合法 HTTP 状态，调用方可据此把「请求没发出去」与
+        「服务端返回 4xx」区分开。
+        """
         headers = dict(headers or {})
         headers.setdefault("User-Agent", "curl/7.88.1")
         last_error = None
@@ -97,15 +127,17 @@ class AppleCalendar:
                             resp.request_info, resp.history, status=resp.status
                         )
                         continue
-                    return await resp.text(encoding="utf-8", errors="replace")
+                    text = await resp.text(encoding="utf-8", errors="replace")
+                    return resp.status, text
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 last_error = e
                 if attempt < retries - 1:
                     await asyncio.sleep(1 * (attempt + 1))
-        logger.debug(
-            f"[AppleCalendar] 请求异常 {url}: {type(last_error).__name__}: {last_error}"
+        logger.warning(
+            f"[AppleCalendar] 请求异常 {method} {url}: "
+            f"{type(last_error).__name__}: {last_error}"
         )
-        return None
+        return 0, None
 
     async def _async_request(
         self,
@@ -116,7 +148,7 @@ class AppleCalendar:
         timeout: int = 30,
         retries: int = 3,
     ) -> str | None:
-        """向后兼容别名：直接委托给 _aiohttp_request"""
+        """向后兼容别名：直接委托给 _aiohttp_request（只要响应体文本）"""
         return await self._aiohttp_request(
             url,
             method=method,
@@ -135,7 +167,7 @@ class AppleCalendar:
         for splitter in ('">', "'>", "<", ">"):
             if splitter in href:
                 href = href.split(splitter, 1)[0]
-        m = re.search("(https?://[^\\s<>'\\\"]+|/^\\s<>'\\\"]+)", href)
+        m = re.search(r"(https?://[^\s<>'\"]+|/[^\s<>'\"]+)", href)
         href = m.group(1) if m else href
         href = re.sub(r"\s+", "", href)
         return href
@@ -193,10 +225,13 @@ class AppleCalendar:
                 return False
             principal_href = self._extract_href(resp1, "current-user-principal")
             if not principal_href:
-                m = re.search(r"(/\\d+/\\w+)/?$", resp1)
-                principal_href = "/" + m.group(1) if m else None
+                # XML 解析失败时的降级提取（iCloud principal 形如 /<dsid>/principal/）。
+                # 捕获组已含前导斜杠，直接用作绝对路径：再补一个 "/" 会拼成
+                # "//<dsid>/principal"，被 urljoin 当网络路径引用、host 变成 dsid
+                m = re.search(r"(/\d+/\w+)/?$", resp1)
+                principal_href = m.group(1) if m else None
             if not principal_href:
-                logger.debug("[AppleCalendar] 无法解析 principal URL")
+                logger.warning("[AppleCalendar] 无法解析 principal URL")
                 return False
             self._principal_url = self._to_absolute_url(
                 "https://caldav.icloud.com", principal_href
@@ -220,15 +255,17 @@ class AppleCalendar:
                 return False
             cal_home_href = self._extract_href(resp2, "calendar-home-set")
             if not cal_home_href:
-                m = re.search(r"https?://[^\\s<>\"']+/calendars/", resp2)
+                # 降级提取：先找绝对 URL，再找 /<dsid>/calendars/ 相对路径。
+                # 同理，捕获组已含前导斜杠，不再补 "/"（补了会变成 //<dsid>/calendars/）
+                m = re.search(r"https?://[^\s<>\"']+/calendars/", resp2)
                 if m:
                     cal_home_href = m.group(0).rstrip("/")
                 else:
-                    m = re.search(r"/(\\d+/calendars/?)", resp2)
+                    m = re.search(r"/(\d+/calendars/?)", resp2)
                     if m:
                         cal_home_href = "/" + m.group(1).rstrip("/")
             if not cal_home_href:
-                logger.debug("[AppleCalendar] 无法解析 calendar home set URL")
+                logger.warning("[AppleCalendar] 无法解析 calendar home set URL")
                 return False
             self._caldav_base_url = self._to_absolute_url(
                 self._principal_url, cal_home_href
@@ -620,49 +657,49 @@ class AppleCalendar:
             )
             return events_list
 
-    async def create_event(
-        self,
-        summary: str,
-        start: datetime,
-        end: datetime | None = None,
-        calendar_id: str | None = None,
-        description: str = "",
-        all_day: bool = False,
-    ) -> str | None:
-        if not await self._discover():
-            logger.error("[AppleCalendar] CalDAV 未连接，无法创建事件")
-            return None
-        calendars = await self._list_calendars()
-        if not calendars:
-            logger.warning("[AppleCalendar] 未找到可写日历")
-            return None
+    def _resolve_calendar_id(
+        self, calendars: list[dict], calendar_id: str | None
+    ) -> str:
+        """解析写入用日历 UID：显式参数 > 配置值 > 第一个日历。
 
-        # 优先级：传入参数 > 配置的 calendar_id > 第一个日历
+        create_event / update_event / delete_event 共用同一口径（脱胎于原
+        create_event 的解析段，含「配置值即当作 UID」的既有语义），保证同一
+        条目始终落在同一个日历资源下。
+        """
         resolved_id = calendar_id or self._calendar_id
         if not resolved_id:
-            # 尝试按名称匹配日历
-            for c in calendars:
-                if (
-                    c.get("name")
-                    and (self._calendar_id or calendar_id)
-                    and self._calendar_id
-                    and self._calendar_id in c.get("name", "")
-                ):
-                    resolved_id = c["id"]
-                    break
-            if not resolved_id:
-                resolved_id = calendars[0]["id"]
-                logger.debug(
-                    f"[AppleCalendar] 未找到指定日历，使用第一个: {resolved_id[:8]}..."
-                )
+            resolved_id = calendars[0]["id"]
+            logger.debug(
+                f"[AppleCalendar] 未找到指定日历，使用第一个: {resolved_id[:8]}..."
+            )
+        return resolved_id
+
+    async def _upsert_event(
+        self,
+        uid: str,
+        summary: str,
+        start: datetime,
+        end: datetime | None,
+        calendar_id: str | None,
+        description: str,
+        all_day: bool,
+    ) -> str | None:
+        """按 UID 写入 VEVENT（CalDAV PUT）。
+
+        同一 UID 落在同一 .ics 资源路径上：资源不存在时为新建（201），
+        已存在时为更新（204）—— 更新既有事件必须沿用原 UID，绝不能新生成
+        （新 UID 会变成第二条事件，旧条目还会被同步判为「Apple 已删除」）。
+        成功（2xx）返回 uid，4xx/5xx/网络失败返回 None。
+        """
+        resolved_id = self._resolve_calendar_id(
+            await self._list_calendars(), calendar_id
+        )
         cal_url = f"{self._caldav_base_url}/{resolved_id}/"
-        uid = str(uuid.uuid4())
         created = datetime.now().strftime("%Y%m%dT%H%M%S")
         if all_day:
             # 全天事件：VALUE=DATE，DTEND 为独占次日（RFC 5545）
-            dtstart_fmt = start.strftime("%Y%m%d")
+            dtstart_line = f"DTSTART;VALUE=DATE:{start.strftime('%Y%m%d')}"
             dtend_fmt = (end or (start + timedelta(days=1))).strftime("%Y%m%d")
-            dtstart_line = f"DTSTART;VALUE=DATE:{dtstart_fmt}"
             dtend_line = f"DTEND;VALUE=DATE:{dtend_fmt}"
         else:
             dtstart_fmt = start.strftime("%Y%m%dT%H%M%S")
@@ -686,7 +723,7 @@ class AppleCalendar:
         lines.append("END:VCALENDAR")
         vevent = ("\r\n".join(lines) + "\r\n").encode()
         event_url = f"{cal_url}{uid}.ics"
-        resp = await self._async_request(
+        status, _body = await self._request_with_status(
             event_url,
             method="PUT",
             data=vevent,
@@ -695,11 +732,69 @@ class AppleCalendar:
                 "Content-Type": "text/calendar",
             },
         )
-        if resp is not None:
-            logger.info(f"[AppleCalendar] 创建事件成功: {summary} (UID={uid})")
+        if 200 <= status < 300:
+            logger.info(f"[AppleCalendar] 写入事件成功: {summary} (UID={uid})")
             return uid
-        logger.error("[AppleCalendar] 创建事件失败（请检查网络）")
+        logger.warning(
+            f"[AppleCalendar] 写入事件失败: {summary} (UID={uid}, HTTP {status})"
+        )
         return None
+
+    async def create_event(
+        self,
+        summary: str,
+        start: datetime,
+        end: datetime | None = None,
+        calendar_id: str | None = None,
+        description: str = "",
+        all_day: bool = False,
+    ) -> str | None:
+        if not await self._discover():
+            logger.error("[AppleCalendar] CalDAV 未连接，无法创建事件")
+            return None
+        if not await self._list_calendars():
+            logger.warning("[AppleCalendar] 未找到可写日历")
+            return None
+        return await self._upsert_event(
+            uid=str(uuid.uuid4()),
+            summary=summary,
+            start=start,
+            end=end,
+            calendar_id=calendar_id,
+            description=description,
+            all_day=all_day,
+        )
+
+    async def update_event(
+        self,
+        uid: str,
+        summary: str,
+        start: datetime,
+        end: datetime | None = None,
+        calendar_id: str | None = None,
+        description: str = "",
+        all_day: bool = False,
+    ) -> bool:
+        """按既有 UID 更新 Apple 事件（同 UID 的 CalDAV PUT 即覆盖原资源）"""
+        if not uid:
+            logger.warning("[AppleCalendar] 缺少 UID，无法更新事件")
+            return False
+        if not await self._discover():
+            logger.error("[AppleCalendar] CalDAV 未连接，无法更新事件")
+            return False
+        if not await self._list_calendars():
+            logger.warning("[AppleCalendar] 未找到可写日历")
+            return False
+        updated_uid = await self._upsert_event(
+            uid=uid,
+            summary=summary,
+            start=start,
+            end=end,
+            calendar_id=calendar_id,
+            description=description,
+            all_day=all_day,
+        )
+        return updated_uid is not None
 
     async def delete_event(self, uid: str, calendar_id: str | None = None) -> bool:
         if not await self._discover():
@@ -707,15 +802,17 @@ class AppleCalendar:
         calendars = await self._list_calendars()
         if not calendars:
             return False
-        resolved_id = calendar_id or self._calendar_id or calendars[0]["id"]
+        resolved_id = self._resolve_calendar_id(calendars, calendar_id)
         cal_url = f"{self._caldav_base_url}/{resolved_id}/"
         event_url = f"{cal_url}{uid}.ics"
-        resp = await self._async_request(
+        status, _body = await self._request_with_status(
             event_url, method="DELETE", headers={"Authorization": self._auth_header()}
         )
-        if resp is not None:
+        # DELETE 成功由状态码判定：204 无正文，401/403 也可能是非空正文
+        if 200 <= status < 300:
             logger.info(f"[AppleCalendar] 删除事件成功: UID={uid}")
             return True
+        logger.warning(f"[AppleCalendar] 删除事件失败: UID={uid} HTTP {status}")
         return False
 
     async def close(self):

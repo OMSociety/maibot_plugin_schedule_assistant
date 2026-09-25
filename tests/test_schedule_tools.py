@@ -2,13 +2,16 @@
 
 覆盖：_parse_clock 中文时刻表达、_parse_schedule_time 三种形态、
 create/update 落库字段与错误分支（结束早于开始、只给结束时间）、
-改期重置防重标记、list_schedules 的全天/区间展示。
+改期重置防重标记、Apple 写入/回写成败文案、list_schedules 的全天/区间展示
+与 days 数字回退。
 plugin 实例用 types.SimpleNamespace 伪造，存储走 tmp_path 真实文件。
 """
 
 import asyncio
 import types
 from datetime import datetime, timedelta
+
+import pytest
 
 from schedule_assistant.schedule_store import ScheduleItem, ScheduleStore
 from schedule_assistant.tools.schedule_tools import (
@@ -23,10 +26,17 @@ MSG = {"user_info": {"user_id": "123"}}
 
 
 class FakeApple:
-    """记录 create_event 调用参数的 Apple 日历替身"""
+    """记录 create_event / update_event 调用参数的 Apple 日历替身
 
-    def __init__(self):
+    create_uid=None 表示写入失败（等价于 AppleCalendar 收到 4xx 时返回 None）；
+    update_ok 控制 update_event 的成败。
+    """
+
+    def __init__(self, create_uid="uid-1", update_ok=True):
         self.calls = []
+        self.update_calls = []
+        self.create_uid = create_uid
+        self.update_ok = update_ok
 
     async def create_event(
         self, summary, start, end=None, calendar_id=None, description="", all_day=False
@@ -34,7 +44,28 @@ class FakeApple:
         self.calls.append(
             {"summary": summary, "start": start, "end": end, "all_day": all_day}
         )
-        return "uid-1"
+        return self.create_uid
+
+    async def update_event(
+        self,
+        uid,
+        summary,
+        start,
+        end=None,
+        calendar_id=None,
+        description="",
+        all_day=False,
+    ):
+        self.update_calls.append(
+            {
+                "uid": uid,
+                "summary": summary,
+                "start": start,
+                "end": end,
+                "all_day": all_day,
+            }
+        )
+        return self.update_ok
 
 
 def _plugin(tmp_path, apple=None):
@@ -284,6 +315,18 @@ class TestCreateSchedule:
         asyncio.run(create_schedule(plugin, "全天", "2026-09-10", "", "", MSG))
         assert apple.calls[0]["all_day"] is True
 
+    def test_apple_write_failure_no_uid_no_success_text(self, tmp_path):
+        """写入失败（4xx → create_event 返回 None）：不落 apple_uid，也不谎报已同步"""
+        apple = FakeApple(create_uid=None)
+        plugin = _plugin(tmp_path, apple=apple)
+        res = asyncio.run(create_schedule(plugin, "开会", "2026-09-10 14:30", "", "", MSG))
+        assert "已同步到 Apple 日历" not in res
+        assert "✅" in res  # 本地日程照常创建
+
+        item = asyncio.run(plugin.store.list_all_items("123"))[0]
+        assert item.apple_uid is None
+        assert apple.calls  # 确实尝试过写入
+
 
 class TestUpdateSchedule:
     """修改日程：改期重置防重标记 / 全天互转 / 错误分支"""
@@ -356,6 +399,99 @@ class TestUpdateSchedule:
         )
         assert res == "结束时间需要晚于开始时间"
 
+    def test_no_apple_uid_no_write_back(self, tmp_path):
+        """纯本地日程（无 apple_uid）不回写 Apple，也不出现同步文案"""
+        apple = FakeApple()
+        plugin = _plugin(tmp_path, apple=apple)
+        item = self._seeded_item(plugin)
+
+        res = asyncio.run(
+            update_schedule(plugin, item.id, "改过的组会", "2026-09-11 09:00", "", MSG)
+        )
+        assert res == "已修改日程：标题改为「改过的组会」, 时间改为09-11 09:00 ✅"
+        assert apple.update_calls == []
+
+    def test_apple_uid_write_back_params(self, tmp_path):
+        """带 apple_uid 的改期按原 UID 回写（同 UID 的 PUT 即更新）"""
+        apple = FakeApple()
+        plugin = _plugin(tmp_path, apple=apple)
+        item = self._seeded_item(plugin)
+        item.apple_uid = "uid-9"
+        asyncio.run(plugin.store.update_item("123", item))
+
+        res = asyncio.run(
+            update_schedule(plugin, item.id, "新标题", "2026-09-11 09:00", "", MSG)
+        )
+        assert "已更新 Apple 日历" in res
+        assert apple.update_calls == [
+            {
+                "uid": "uid-9",
+                "summary": "新标题",
+                "start": datetime(2026, 9, 11, 9, 0),
+                "end": None,
+                "all_day": False,
+            }
+        ]
+
+    def test_apple_uid_write_back_failure_unlinks_apple(self, tmp_path, caplog):
+        """回写失败：只提示本地已改，并清空 apple_uid 脱离同步（否则下轮同步覆盖回去）"""
+        apple = FakeApple(update_ok=False)
+        plugin = _plugin(tmp_path, apple=apple)
+        item = self._seeded_item(plugin)
+        item.apple_uid = "uid-9"
+        asyncio.run(plugin.store.update_item("123", item))
+
+        with caplog.at_level("WARNING"):
+            res = asyncio.run(
+                update_schedule(plugin, item.id, "新标题", "2026-09-11 09:00", "", MSG)
+            )
+
+        assert res == "已修改日程：标题改为「新标题」, 时间改为09-11 09:00 ✅"
+        assert "已更新 Apple 日历" not in res
+        assert apple.update_calls[0]["uid"] == "uid-9"
+
+        revived = asyncio.run(plugin.store.list_all_items("123"))[0]
+        assert revived.title == "新标题"
+        assert revived.apple_uid is None  # 脱离 Apple 同步，改动不再被旧值覆盖
+        assert "已解除 Apple 同步" in caplog.text
+
+    def test_apple_uid_write_back_exception_unlinks_apple(self, tmp_path):
+        """回写抛异常按失败处理：同样清空 apple_uid，不向上冒泡"""
+        apple = FakeApple()
+        plugin = _plugin(tmp_path, apple=apple)
+        item = self._seeded_item(plugin)
+        item.apple_uid = "uid-9"
+        asyncio.run(plugin.store.update_item("123", item))
+
+        async def boom(*a, **kw):
+            raise RuntimeError("boom")
+
+        apple.update_event = boom
+        res = asyncio.run(
+            update_schedule(plugin, item.id, "新标题", "2026-09-11 09:00", "", MSG)
+        )
+        assert "已更新 Apple 日历" not in res
+        assert asyncio.run(plugin.store.list_all_items("123"))[0].apple_uid is None
+
+    def test_title_only_change_writes_back_same_time(self, tmp_path):
+        """只改标题也回写：Apple 事件标题必须同步，否则下轮同步把旧标题写回本地"""
+        apple = FakeApple()
+        plugin = _plugin(tmp_path, apple=apple)
+        item = self._seeded_item(plugin)
+        item.apple_uid = "uid-9"
+        asyncio.run(plugin.store.update_item("123", item))
+
+        asyncio.run(update_schedule(plugin, item.id, "新标题", "", "", MSG))
+        assert apple.update_calls == [
+            {
+                "uid": "uid-9",
+                "summary": "新标题",
+                "start": datetime(2026, 9, 10, 14, 30),
+                "end": datetime(2026, 9, 10, 16, 30),
+                "all_day": False,
+            }
+        ]
+
 
 class TestListSchedulesDisplay:
     """列表展示：全天 / 区间 / 单点"""
@@ -391,3 +527,26 @@ class TestListSchedulesDisplay:
         assert "📅 全天 │ 全天事项" in res  # 全天事件不再被静默跳过
         assert "⏰ 10:00-11:30 │ 组会" in res
         assert "⏰ 09:00 │ 开会" in res
+
+    @pytest.mark.parametrize("date_arg", ["0", "0 "])
+    def test_zero_days_falls_back_to_window(self, tmp_path, date_arg):
+        """date="0" 这类数字必须回退到有效窗口：days=0 会让 future=None，
+        now <= dt <= future 直接 TypeError（date=None 走 else 分支反而是安全的）"""
+        plugin = _plugin(tmp_path)
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M")
+        asyncio.run(
+            plugin.store.add_item(
+                "123", ScheduleItem(type="schedule", title="明天的会", time=tomorrow)
+            )
+        )
+
+        res = asyncio.run(list_schedules(plugin, date_arg, MSG))
+        assert "查看日程失败" not in res
+        assert "明天的会" in res  # 默认窗口（至少 1 天）覆盖到明天
+        assert "接下来" in res
+
+    def test_zero_days_empty_store_has_no_error_text(self, tmp_path):
+        """库空时 days=0 会提前 return，不得再出现 TypeError 文案"""
+        plugin = _plugin(tmp_path)
+        res = asyncio.run(list_schedules(plugin, "0", MSG))
+        assert res == "最近1天没有日程安排~"

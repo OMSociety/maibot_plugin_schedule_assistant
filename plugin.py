@@ -47,6 +47,7 @@ from .reminders.briefing import BriefingReminder
 from .reminders.schedule import (
     build_schedule_reminder_intent,
     collect_due_schedule_items,
+    mark_schedule_items_triggered,
     parse_item_time,
 )
 from .schedule_store import ScheduleItem, ScheduleStore
@@ -1215,11 +1216,17 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 include_known_users=True
             ):
                 try:
+                    # 不在此处落防重标记：Maisaka 开口失败（最常见是用户当前不在
+                    # 活跃 stream）时若已落盘，这条日程本期永久不再提醒
                     due = await collect_due_schedule_items(
-                        self.store, user_id, minutes_ahead
+                        self.store, user_id, minutes_ahead, mark_triggered=False
                     )
                     if due:
-                        await self._schedule_reminder_maisaka(user_id, due)
+                        ok = await self._schedule_reminder_maisaka(user_id, due)
+                        if ok:
+                            await mark_schedule_items_triggered(
+                                self.store, user_id, due
+                            )
                 except Exception as e:
                     self.ctx.logger.warning(
                         f"{LOG_PREFIX} 用户 {user_id} 日程提醒扫描失败: {e}"

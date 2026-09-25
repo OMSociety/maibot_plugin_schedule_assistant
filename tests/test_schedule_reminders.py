@@ -38,6 +38,13 @@ def _add(store, user_id="u", **kw):
     return item
 
 
+def _collect(store, user_id="u", minutes=10):
+    """按「无回调、挑选即已提醒」口径取到点日程（显式启用内联标记）"""
+    return asyncio.run(
+        collect_due_schedule_items(store, user_id, minutes, mark_triggered=True)
+    )
+
+
 class TestCollectDueScheduleItems:
     """到点判定与防重"""
 
@@ -45,19 +52,19 @@ class TestCollectDueScheduleItems:
         store = _store(tmp_path)
         item = _add(store, time=_at(5))
 
-        due = asyncio.run(collect_due_schedule_items(store, "u", 10))
+        due = _collect(store)
         assert len(due) == 1
         assert due[0]["item_id"] == item.id
         assert due[0]["title"] == "测试日程"
         assert 3 <= due[0]["minutes_until"] <= 5
 
         # 防重：同一事件第二次扫描不再触发
-        assert asyncio.run(collect_due_schedule_items(store, "u", 10)) == []
+        assert _collect(store) == []
 
     def test_last_triggered_persisted(self, tmp_path):
         store = _store(tmp_path)
         item = _add(store, time=_at(5))
-        asyncio.run(collect_due_schedule_items(store, "u", 10))
+        _collect(store)
 
         revived = asyncio.run(store.list_all_items("u"))[0]
         assert revived.id == item.id
@@ -66,36 +73,36 @@ class TestCollectDueScheduleItems:
     def test_outside_window_not_due(self, tmp_path):
         store = _store(tmp_path)
         _add(store, time=_at(30))
-        assert asyncio.run(collect_due_schedule_items(store, "u", 10)) == []
+        assert _collect(store) == []
 
     def test_boundary_inclusive(self, tmp_path):
         """提前量窗口上边界含 minutes_before 本身（扫描间隔不大于提前量时必达）"""
         store = _store(tmp_path)
         _add(store, time=_at(10))
-        due = asyncio.run(collect_due_schedule_items(store, "u", 10))
+        due = _collect(store)
         assert len(due) == 1
 
     def test_already_started_not_due(self, tmp_path):
         store = _store(tmp_path)
         _add(store, time=_at(-5))
-        assert asyncio.run(collect_due_schedule_items(store, "u", 10)) == []
+        assert _collect(store) == []
 
     def test_habit_skipped(self, tmp_path):
         """habit（洗澡/睡觉/喝水）走独立定时任务，不进日程提醒"""
         store = _store(tmp_path)
         _add(store, type="habit", title="喝水", time=_at(5))
-        assert asyncio.run(collect_due_schedule_items(store, "u", 10)) == []
+        assert _collect(store) == []
 
     def test_all_day_skipped(self, tmp_path):
         store = _store(tmp_path)
         day = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
         _add(store, title="全天事项", time=day, all_day=True)
-        assert asyncio.run(collect_due_schedule_items(store, "u", 10)) == []
+        assert _collect(store) == []
 
     def test_disabled_skipped(self, tmp_path):
         store = _store(tmp_path)
         _add(store, time=_at(5), enabled=False)
-        assert asyncio.run(collect_due_schedule_items(store, "u", 10)) == []
+        assert _collect(store) == []
 
     def test_end_time_and_context_fields(self, tmp_path):
         store = _store(tmp_path)
@@ -106,7 +113,7 @@ class TestCollectDueScheduleItems:
             end_time=_at(65),
             context="记得带电脑",
         )
-        due = asyncio.run(collect_due_schedule_items(store, "u", 10))
+        due = _collect(store)
         assert due[0]["context"] == "记得带电脑"
         assert due[0]["end"]  # 区间日程带结束时刻
         assert ":" in due[0]["end"]
@@ -115,7 +122,7 @@ class TestCollectDueScheduleItems:
         store = _store(tmp_path)
         _add(store, title="本地", time=_at(5))
         _add(store, title="苹果", time=_at(6), apple_uid="uid-1")
-        due = asyncio.run(collect_due_schedule_items(store, "u", 10))
+        due = _collect(store)
         sources = {d["title"]: d["source"] for d in due}
         assert sources == {"本地": "local", "苹果": "apple"}
 
