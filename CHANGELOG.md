@@ -1,13 +1,18 @@
 # Changelog
 
-本项目所有重要更改都会记录在此文件。
+本项目的更改记录在此文件。
+
+All notable changes to this project are documented in this file.
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
 ## [1.2.1] - 2026-09-25
 
-### 修复 (Fixed)
+### 修复
 
 - **Apple 日历写操作按 HTTP 状态码判定成败**：此前 4xx（凭据失效、日历只读）会被当作成功并写入无效 UID，下一轮同步再据此把本地日程静默删除。
 - 创建成功的提示只在真正写入 Apple 日历后出现。
@@ -16,19 +21,33 @@
 - **提醒的防重标记改为确认触发成功后才写入**，`collect_due_schedule_items` 的默认行为同步改为「只挑选、不落盘」。
 - `list_schedules` 的 `date="0"` 不再抛内部异常。
 
-### 变更 (Changed)
+### 变更
 
 - 提醒触发失败时不再消耗该日程本期的提醒机会（改为下一轮重试）。
 - Apple 写回失败时该日程会脱离 Apple 同步：本地改动得以保留，代价是 Apple 侧的旧事件可能在下轮同步中作为新事件拉回，形成一条重复日程。
 
+### Fixed
+
+- **Apple Calendar write operations now judge success by HTTP status code**: a 4xx (invalid credentials, read-only calendar) used to be treated as success and an invalid UID was written, on which the next sync round then silently deleted the local schedule.
+- The notice for a successful creation now appears only after the event has really been written to Apple Calendar.
+- **Fixed the three regular expressions in the iCloud fallback extraction path**: the previous double escaping made them never match, so they failed silently and left no log when XML parsing failed; the same problem in the relative-address sanitization was fixed as well, and the failure paths now log a warning.
+- Editing a schedule that has a UID now writes the change back to the same calendar event, so it is no longer restored to the old Apple value by the next sync round.
+- **The reminder de-duplication mark is now written only after the trigger is confirmed successful**, and the default behavior of `collect_due_schedule_items` was changed accordingly to "select only, write nothing".
+- `date="0"` for `list_schedules` no longer raises an internal exception.
+
+### Changed
+
+- A failed reminder trigger no longer consumes that schedule's reminder opportunity for the current period (it is retried on the next round).
+- When an Apple write-back fails, that schedule leaves Apple sync: the local change is preserved, at the cost that the old event on the Apple side may be pulled back as a new event in the next sync round, forming a duplicate schedule.
+
 ## [1.2.0] - 2026-09-23
 
-### 新增 (Added)
+### 新增
 
 - **Apple 日历事件提前提醒**：开启日程提醒与 Apple 日历同步后，手机侧新建 / 改期的事件同样在开始前提前提醒（扫描前触发一次同步，300 秒内的重复拉取走缓存）。
 - **日程工具支持时间区间与全天日程**：创建 / 修改日程可写「明天9点到11点」（区间）、「明天全天」或纯日期（全天）；两端纯日期的区间（「明天到后天」）按全天处理，多日取开始日；全天事件写入 Apple 日历为全天事件，单时间点模式行为不变（Apple 日历按开始后 1 小时）。
 
-### 修复 (Fixed)
+### 修复
 
 - **修复定时扫描空转**：锁获取写法 `asyncio.wait_for(lock.acquire(), timeout=0)` 在该语义下必超时（空闲锁也一样），日程提醒扫描与 Apple 定时同步此前整体不执行；现改为非阻塞抢锁，锁被占用时跳过本轮。
 - 修复提前量窗口漏提醒：判定由「开始前 N 分钟 ±2 分钟」的窄窗口改为「开始前 N 分钟内均触发」（窗口含上边界，扫描间隔不大于提前提醒分钟数时必达）。
@@ -36,45 +55,45 @@
 - 修复全天 / 日期型日程在「查看日程」中被静默跳过的问题。
 - 修复「明天下午3点」这类带时段词的口语时间表达解析失败的问题。
 
-### 变更 (Changed)
+### 变更
 
 - 日程提醒（本地日程与 Apple 日历事件）改为 Maisaka 拟人开口（`maisaka.proactive.trigger`，intent 注入回复生命周期），同一轮的多个事件合并为一次提醒；早安播报保持固定格式直发。
 - 早安播报与日程列表的时间标签支持区间（15:00-16:30）与全天显示。
 - 扫描间隔配置提示补充「建议不大于提前提醒分钟数」。
 
-### 移除 (Removed)
+### 移除
 
 - 配置项「日程提醒模板」（`prompt_schedule`）：日程提醒措辞由 Maisaka 按人格生成。
 
 ## [1.1.1] - 2026-09-18
 
-### 修复 (Fixed)
+### 修复
 
 - **修复 LLM 文本生成在 maibot-plugin-sdk 2.8.1 上全部失败**：`ctx.llm.generate` 的模型任务槽改由 `task_name` 传入（此前用 `model="replyer"`）。SDK 每次调用都会带上 `task_name`，宿主据此把 `model` 参数当作具体模型名去 `[[models]]` 查找，因此报「未找到名为 'replyer' 的模型」，早安播报、日程播报与提醒文案均退化为兜底文本。
 
 ## [1.1.0] - 2026-09-14
 
-### 新增 (Added)
+### 新增
 
 - **配置界面多语言（en-US / ja-JP）**：WebUI 配置页的字段标题、提示与占位文本、分区标题与分区描述按界面语言自动切换（宿主界面语言支持中文/英文/日文/韩文，无对应译文时回退中文），manifest 声明 `supported_locales`。
 - 新增配置界面 i18n 回归测试：离线生成配置 Schema，校验各语言覆盖率、数值一致与技术标识符保全。
 
-### 修复 (Fixed)
+### 修复
 
 - 修复 Apple 日历同步可能重复处理同一事件实例的问题：uid 去重提前到解析阶段，无论当轮分支结果如何都标记已处理，重复实例在下一轮循环即被拦下。
 
-### 变更 (Changed)
+### 变更
 
 - 天气查询默认城市由「杭州」改为「北京」（配置默认值与兜底值同步调整）。
 
 ## [1.0.1] - 2026-09-06
 
-### 修复 (Fixed)
+### 修复
 
 - **修复存储键身份不一致**：定时路径曾以配置原值（如 `qq:123456`）作存储键，而 LLM 工具写入用裸 ID，导致早安播报读不到工具创建的日程。现统一以裸 ID 为键（发送时按配置还原平台），并对旧数据键自动迁移。
 - 修复 QQ 官方 markdown 发送抛异常时不降级纯文本的问题（此前仅覆盖返回失败值的路径）。
 
-### 变更 (Changed)
+### 变更
 
 - 移除已无调用的死代码：整条未启用的 LLM 习惯提醒路径与存储层 8 个零调用方法、消息模块兼容桩（行为不变）。
 - LLM 熔断期兜底文案改为随每次生成显式传入，防止多提醒场景串用。
