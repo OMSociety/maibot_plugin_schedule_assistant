@@ -14,8 +14,6 @@ import sys
 import types
 from datetime import datetime, timedelta
 
-import pytest
-
 from schedule_assistant.reminders.schedule import (
     collect_due_schedule_items,
     mark_schedule_items_triggered,
@@ -170,7 +168,7 @@ def _install_sdk_stub() -> None:
     sdk.Field = _Field
     sdk.MaiBotPlugin = _Plugin
     sdk.PluginConfigBase = _ConfigBase
-    sdk.Tool = lambda *a, **kw: (lambda fn: fn)
+    sdk.Tool = lambda *a, **kw: lambda fn: fn
     sdk_types = types.ModuleType("maibot_sdk.types")
     sdk_types.ToolParameterInfo = _ConfigBase
     sdk_types.ToolParamType = _ToolParamType

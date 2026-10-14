@@ -11,9 +11,7 @@ _async_request / _request_with_status 用替身替换，不上网。
 """
 
 import asyncio
-import re
 from datetime import datetime
-from urllib.parse import urljoin
 
 import pytest
 
@@ -128,7 +126,9 @@ class TestDiscoverFallback:
             return (0, None) if text is None else (207, text)
 
         monkeypatch.setattr(cal, "_request_with_status", fake_request, raising=False)
-        assert sync(cal._discover()) is False  # principal 拿到后中止（无 home set 响应）
+        assert (
+            sync(cal._discover()) is False
+        )  # principal 拿到后中止（无 home set 响应）
         assert urls == [
             "https://caldav.icloud.com/",
             f"https://caldav.icloud.com/{self.DSID}/principal",
@@ -213,9 +213,7 @@ class TestRequestWithStatus:
 class TestCreateEventStatus:
     """create_event 只在 2xx 返回 uid（4xx 一律 None）"""
 
-    @pytest.mark.parametrize(
-        "status,body", [(201, ""), (200, "created"), (204, "")]
-    )
+    @pytest.mark.parametrize("status,body", [(201, ""), (200, "created"), (204, "")])
     def test_2xx_returns_uid(self, monkeypatch, status, body):
         cal, calls = make_calendar(monkeypatch, status, body)
         uid = sync(

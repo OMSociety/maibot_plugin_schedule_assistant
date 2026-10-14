@@ -319,7 +319,9 @@ class TestCreateSchedule:
         """写入失败（4xx → create_event 返回 None）：不落 apple_uid，也不谎报已同步"""
         apple = FakeApple(create_uid=None)
         plugin = _plugin(tmp_path, apple=apple)
-        res = asyncio.run(create_schedule(plugin, "开会", "2026-09-10 14:30", "", "", MSG))
+        res = asyncio.run(
+            create_schedule(plugin, "开会", "2026-09-10 14:30", "", "", MSG)
+        )
         assert "已同步到 Apple 日历" not in res
         assert "✅" in res  # 本地日程照常创建
 
