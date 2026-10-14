@@ -5,8 +5,12 @@
    Maisaka 开口失败（最常见是用户当前不在活跃 stream）会让该日程本期永久不再提醒；
 2. 插件 _schedule_reminder_scan 的编排顺序：触发失败不落标记、触发成功才落标记。
 
-plugin.py 依赖 maibot_sdk（插件运行依赖，本机测试环境未安装），本文件用最小替身
-注入后再导入 —— 替身只提供导入与构造所需接口，不模拟 SDK 行为。
+plugin.py 依赖 maibot_sdk（插件运行依赖）。本文件在 SDK 缺失时用最小替身撑住导入，
+替身只提供导入与构造所需接口，不模拟 SDK 行为；装有真 SDK 的环境走真包。
+
+两种环境下插件都拿不到 Runner 注入的上下文，因此 _make_plugin 统一补一份 ctx
+（真 SDK 的 ctx 是读 _ctx 的 property，未经注入即抛 RuntimeError；替身则在构造时
+自带一个），使日志调用在两种环境下都成立。
 """
 
 import asyncio
@@ -192,6 +196,9 @@ class _FakeMessaging:
 
 def _make_plugin(tmp_path, users=("u",)):
     plugin = ScheduleAssistantPlugin()
+    # 插件日志走 self.ctx.logger：真 SDK 的 ctx 是读 _ctx 的 property，不注入即抛
+    # RuntimeError；替身的 ctx 在构造时已自备。这里统一补上，两种环境行为一致。
+    plugin._ctx = types.SimpleNamespace(logger=_NullLogger())
     plugin.store = _store(tmp_path)
     plugin.messaging = _FakeMessaging(users)
 
