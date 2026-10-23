@@ -10,6 +10,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 修复
+
+- **日程提醒可能一条都收不到**：麦麦没有开口时，插件此前仍会写入防重标记，这条日程本期不再提醒；现改为确认送达后才写标记。
+- 读取 `maisaka.proactive.trigger` 的返回值：宿主拒绝（如会话已不存在）时返回 `{"success": false}` 而不抛异常，此前会被当作触发成功。
+
+### 新增
+
+- 日程提醒兜底送达（`enable_schedule_reminder_fallback`，默认开启）：请求麦麦开口并等一轮扫描后，若会话里没有麦麦发出的消息，插件直接补发一条纯文本提醒。
+
+### Fixed
+
+- **Schedule reminders could get lost entirely**: the de-duplication mark used to be written even when Maisaka never spoke, so that schedule stopped reminding for the whole period; the mark is now written only after delivery is confirmed.
+- Read the return value of `maisaka.proactive.trigger`: the host returns `{"success": false}` instead of raising when it rejects the request (e.g. the session is gone), which used to be treated as success.
+
+### Added
+
+- Fallback delivery for schedule reminders (`enable_schedule_reminder_fallback`, on by default): after asking Maisaka to speak and waiting one scan round, the plugin sends a plain-text reminder itself when no Maisaka message appeared in the session.
+
 ## [1.2.1] - 2026-09-25
 
 ### 修复

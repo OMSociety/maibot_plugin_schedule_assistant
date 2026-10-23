@@ -21,7 +21,7 @@
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, ClassVar
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -45,6 +45,9 @@ from .messaging import MessagingService, extract_stream_id, parse_user_target
 from .notion_client import NotionClient
 from .reminders.briefing import BriefingReminder
 from .reminders.schedule import (
+    FALLBACK_DELAY_MINUTES,
+    FALLBACK_GRACE_MINUTES,
+    build_fallback_text,
     build_schedule_reminder_intent,
     collect_due_schedule_items,
     mark_schedule_items_triggered,
@@ -205,6 +208,25 @@ class ScheduleReminderSettingsConfig(PluginConfigBase):
                 "ja-JP": {
                     "label": "スキャン間隔（分）",
                     "hint": "最小 2、事前リマインド分数以下を推奨",
+                },
+            },
+        },
+    )
+    enable_schedule_reminder_fallback: bool = Field(
+        default=True,
+        description="麦麦没有开口时，到点由插件直接补发一条纯文本提醒（保证送达）",
+        json_schema_extra={
+            "label": "麦麦没开口时补发",
+            "hint": "关闭后只请求麦麦开口，不保证送达",
+            "i18n": {
+                "en-US": {
+                    "label": "Fallback Delivery When Maisaka Stays Silent",
+                    "hint": "When off, only Maisaka is asked to speak; delivery is not "
+                    "guaranteed",
+                },
+                "ja-JP": {
+                    "label": "Maisaka が話さない場合の補完送信",
+                    "hint": "オフにすると Maisaka への依頼だけになり、届く保証はありません",
                 },
             },
         },
@@ -761,6 +783,42 @@ class ScheduleAssistantConfig(PluginConfigBase):
 # ============ 插件主类 ============
 
 
+def _message_timestamp(msg: dict) -> datetime | None:
+    """从宿主序列化消息里取发送时间（MessageDict.timestamp 为字符串，兼容 ISO 与时间戳）"""
+    raw = msg.get("timestamp")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(raw))
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                return datetime.fromtimestamp(float(text))
+            except (OverflowError, OSError, ValueError):
+                return None
+        return dt.astimezone().replace(tzinfo=None) if dt.tzinfo else dt
+    return None
+
+
+def _message_sender_id(msg: dict) -> str:
+    """从宿主序列化消息里取发送者 ID（message_info.user_info.user_id）"""
+    info = msg.get("message_info")
+    if not isinstance(info, dict):
+        return ""
+    user_info = info.get("user_info")
+    if not isinstance(user_info, dict):
+        return ""
+    return str(user_info.get("user_id") or "")
+
+
 class ScheduleAssistantPlugin(MaiBotPlugin):
     """日程提醒助手插件"""
 
@@ -784,6 +842,8 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         self._apple_calendar_sync_lock = asyncio.Lock()
         self._morning_ctx_cache: dict | None = None
         self._morning_ctx_ts = 0.0
+        # 日程提醒的补发账本：key=user:item → 请求麦麦开口的时刻（进程内，不落盘）
+        self._reminder_pending: dict[str, datetime] = {}
 
     # ── 配置访问辅助（展平嵌套到 dict，兼容既有业务代码）──
 
@@ -798,6 +858,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         cfg["schedule_reminder_minutes"] = c.schedule_reminder.schedule_reminder_minutes
         cfg["schedule_reminder_check_interval"] = (
             c.schedule_reminder.schedule_reminder_check_interval
+        )
+        cfg["enable_schedule_reminder_fallback"] = (
+            c.schedule_reminder.enable_schedule_reminder_fallback
         )
         cfg["enable_morning_report"] = c.habit_reminder.enable_morning_report
         cfg["morning_report_time"] = c.habit_reminder.morning_report_time
@@ -1104,23 +1167,36 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         reason: str,
         metadata: dict | None = None,
     ) -> bool:
-        """对单个用户触发 Maisaka 主动开口（intent 注入回复生命周期），返回是否成功"""
+        """请求 Maisaka 主动开口，返回宿主是否接受了这次主动聊天任务
+
+        注意 True 只代表宿主排上了一轮强制回复，不代表麦麦真的开口（说不说话由
+        模型决定）。调用方拿它当「已提醒」的证据之前，必须另有确有其发送的凭据
+        （见 _deliver_user_schedules 的补发判定）。
+        """
         stream = await self._get_user_stream(user_id)
         if not stream:
             return False
         try:
-            await self.ctx.maisaka.proactive.trigger(
+            result = await self.ctx.maisaka.proactive.trigger(
                 stream_id=extract_stream_id(stream),
                 intent=intent,
                 reason=reason,
                 metadata=metadata or {"source": "schedule_assistant"},
             )
-            return True
         except Exception as e:
             self.ctx.logger.warning(
                 f"{LOG_PREFIX} Maisaka 主动触发失败 user={user_id} reason={reason}: {e}"
             )
             return False
+        # 宿主拒绝时不抛异常，而是返回 {"success": False, "error": ...}
+        # （如会话已不存在、intent 为空），不读返回值就会把拒绝当成功
+        if isinstance(result, dict) and result.get("success") is False:
+            self.ctx.logger.warning(
+                f"{LOG_PREFIX} Maisaka 主动触发被拒绝 user={user_id} "
+                f"reason={reason} err={result.get('error')}"
+            )
+            return False
+        return True
 
     async def _trigger_maisaka_habit(self, habit_type: str, user_id: str) -> bool:
         """习惯提醒（洗澡/睡觉/喝水）的 Maisaka 触发入口"""
@@ -1211,26 +1287,166 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
 
             conf = self._flat_config()
             minutes_ahead = max(1, int(conf.get("schedule_reminder_minutes", 10) or 10))
+            check_interval = max(
+                2, int(conf.get("schedule_reminder_check_interval", 5) or 5)
+            )
+            fallback_enabled = bool(conf.get("enable_schedule_reminder_fallback", True))
+            # 宽限期让「开始后仍未送达」的事件继续留在候选集里，供补发再试；
+            # 至少留两个扫描间隔，避免刚好错过最后一轮
+            grace_minutes = (
+                max(FALLBACK_GRACE_MINUTES, 2 * check_interval)
+                if fallback_enabled
+                else 0
+            )
 
             for user_id in await self.messaging.resolve_target_users(
                 include_known_users=True
             ):
                 try:
-                    # 不在此处落防重标记：Maisaka 开口失败（最常见是用户当前不在
-                    # 活跃 stream）时若已落盘，这条日程本期永久不再提醒
-                    due = await collect_due_schedule_items(
-                        self.store, user_id, minutes_ahead, mark_triggered=False
+                    await self._deliver_user_schedules(
+                        user_id, minutes_ahead, grace_minutes, fallback_enabled
                     )
-                    if due:
-                        ok = await self._schedule_reminder_maisaka(user_id, due)
-                        if ok:
-                            await mark_schedule_items_triggered(
-                                self.store, user_id, due
-                            )
                 except Exception as e:
                     self.ctx.logger.warning(
                         f"{LOG_PREFIX} 用户 {user_id} 日程提醒扫描失败: {e}"
                     )
+
+    async def _deliver_user_schedules(
+        self,
+        user_id: str,
+        minutes_ahead: int,
+        grace_minutes: int,
+        fallback_enabled: bool,
+    ) -> None:
+        """单个用户的一轮提醒编排：请麦麦开口一次 → 没开口就补发 → 送达才落标记
+
+        防重标记表示「这一期已经确认送达」，因此只在这两条路径上写：麦麦的外发
+        被观测到，或插件补发成功。请求麦麦开口被接受不写标记——否则一次不开口
+        就会把这条日程本期彻底吃掉。
+        """
+        now = datetime.now()
+        due = await collect_due_schedule_items(
+            self.store,
+            user_id,
+            minutes_ahead,
+            mark_triggered=False,
+            grace_minutes=grace_minutes,
+        )
+        due_keys = {self._reminder_key(user_id, it) for it in due}
+        # 已送达或已出窗的条目退出账本（出窗的条目不会再被 collect 选中）
+        for key in [
+            k
+            for k in self._reminder_pending
+            if k.startswith(f"{user_id}:") and k not in due_keys
+        ]:
+            self._reminder_pending.pop(key, None)
+
+        fresh = [
+            it
+            for it in due
+            if self._reminder_key(user_id, it) not in self._reminder_pending
+        ]
+        if fresh and await self._schedule_reminder_maisaka(user_id, fresh):
+            if fallback_enabled:
+                for it in fresh:
+                    self._reminder_pending[self._reminder_key(user_id, it)] = now
+            else:
+                # 关闭补发时沿用旧口径：请求被宿主接受即视为已提醒
+                await mark_schedule_items_triggered(self.store, user_id, fresh)
+
+        if not fallback_enabled:
+            return
+
+        waiting = [
+            it
+            for it in due
+            if self._reminder_key(user_id, it) in self._reminder_pending
+            and now - self._reminder_pending[self._reminder_key(user_id, it)]
+            >= timedelta(minutes=FALLBACK_DELAY_MINUTES)
+        ]
+        if not waiting:
+            return
+
+        if await self._reminder_spoke_since(
+            user_id,
+            min(
+                self._reminder_pending[self._reminder_key(user_id, it)]
+                for it in waiting
+            ),
+        ):
+            # 麦麦确实开口了：关窗，不再补发
+            await self._finish_reminders(user_id, waiting)
+            return
+
+        if await self._send_reminder_fallback(user_id, waiting):
+            await self._finish_reminders(user_id, waiting)
+
+    async def _finish_reminders(self, user_id: str, items: list[dict]) -> None:
+        """确认送达后收尾：落防重标记并清掉补发账本"""
+        await mark_schedule_items_triggered(self.store, user_id, items)
+        for it in items:
+            self._reminder_pending.pop(self._reminder_key(user_id, it), None)
+
+    @staticmethod
+    def _reminder_key(user_id: str, item: dict) -> str:
+        """补发账本的键：同一用户的不同日程互不干扰"""
+        return f"{user_id}:{item.get('item_id')}"
+
+    async def _reminder_spoke_since(self, user_id: str, since: datetime) -> bool:
+        """since 之后该用户的会话里是否已有麦麦发出的消息（尽力而为的开口确认）
+
+        麦麦开口走宿主自己的发送链路，插件拿不到精确回执：这里以「会话内出现了
+        一条不是用户发的消息」作近似。任何取不到证据的情况（无聊天流、能力不可
+        用、字段缺失）一律返回 False —— 宁可多补一条，也不让提醒静默丢失。
+        """
+        stream = await self._get_user_stream(user_id)
+        stream_id = extract_stream_id(stream) if stream else ""
+        if not stream_id:
+            return False
+        hours = max(1, int((datetime.now() - since).total_seconds() // 3600) + 1)
+        try:
+            messages = await self.ctx.call_capability(
+                "message.get_recent", chat_id=stream_id, limit=20, hours=hours
+            )
+        except Exception as e:
+            self.ctx.logger.debug(f"{LOG_PREFIX} 查询最近消息失败 user={user_id}: {e}")
+            return False
+
+        # 能力失败时宿主回 {"success": False, "error": ...}（无 messages 键）
+        if isinstance(messages, dict):
+            if messages.get("success") is False:
+                self.ctx.logger.debug(
+                    f"{LOG_PREFIX} 查询最近消息被拒 user={user_id}: "
+                    f"{messages.get('error') or messages}"
+                )
+            return False
+
+        _, uid = parse_user_target(user_id)
+        for msg in messages or []:
+            if not isinstance(msg, dict):
+                continue
+            ts = _message_timestamp(msg)
+            if ts is None or ts <= since:
+                continue
+            sender = _message_sender_id(msg)
+            if sender and sender != str(uid):
+                return True
+        return False
+
+    async def _send_reminder_fallback(self, user_id: str, items: list[dict]) -> bool:
+        """麦麦没开口时插件直接补发一条纯文本提醒（不经过 LLM）"""
+        if not self.messaging or not items:
+            return False
+        titles = [it.get("title") for it in items]
+        ok = await self.messaging.send_to_user(
+            user_id, build_fallback_text(items), markdown=False
+        )
+        log = self.ctx.logger.info if ok else self.ctx.logger.warning
+        log(
+            f"{LOG_PREFIX} 日程提醒{'补发成功' if ok else '补发失败'} "
+            f"user={user_id} items={titles}"
+        )
+        return ok
 
     # ── Apple 日历同步 ─────────────────────────────────
 

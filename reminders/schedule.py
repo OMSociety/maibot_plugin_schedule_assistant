@@ -2,10 +2,11 @@
 日程提醒模块（MaiBot 插件版）
 
 只负责「谁该被提醒、何时算到点」：扫描 schedule 类型日程、判定提前量窗口，
-按调用方确认的触发结果写防重标记，并把到点事件打包成 intent 文本。habit 类型
-（洗澡/睡觉/喝水）由独立定时任务处理，全天事件不提前提醒，均不在此扫描。
+按调用方确认的触发结果写防重标记，并把到点事件打包成 intent 文本；麦麦没有开口
+时插件自己直发的纯文本提示也由本模块生成。habit 类型（洗澡/睡觉/喝水）由独立
+定时任务处理，全天事件不提前提醒，均不在此扫描。
 
-措辞与发送不在本模块：插件侧把 intent 注入 Maisaka 回复生命周期拟人开口
+发送不在本模块：插件侧把 intent 注入 Maisaka 回复生命周期拟人开口
 （见 plugin.py 的 _schedule_reminder_scan / _schedule_reminder_maisaka）。
 """
 
@@ -16,6 +17,12 @@ from typing import Any
 from ..constants import LOG_PREFIX
 
 logger = logging.getLogger(__name__)
+
+# 麦麦未开口时的补发节奏：请求开口后等这么久仍无开口迹象，插件才自己直发一条。
+# 实际送达时刻由它与扫描间隔共同决定（默认扫描 5 分钟，通常在提醒时刻前后一轮）。
+FALLBACK_DELAY_MINUTES = 2
+# 宽限期下限：日程开始后仍保留兜底机会的时长，调用方取 max(本值, 2 × 扫描间隔)。
+FALLBACK_GRACE_MINUTES = 10
 
 
 def parse_item_time(time_str: str) -> datetime | None:
@@ -59,11 +66,16 @@ async def collect_due_schedule_items(
     user_id: str,
     minutes_before: int = 15,
     mark_triggered: bool = False,
+    grace_minutes: int = 0,
 ) -> list[dict[str, Any]]:
     """选出即将开始的日程（仅 schedule 类型）。
 
     提醒时机：开始前 minutes_before 分钟内（0 < 剩余分钟 <= minutes_before）
     触发一次；整个提前量窗口都有效，配合任意扫描间隔都不会漏掉窗口内的事件。
+
+    grace_minutes > 0 时窗口向开始后延伸（-grace_minutes <= 剩余分钟），让开始后
+    仍能被选到——调用方据此获得补发机会（麦麦没开口时自己直发），默认 0 维持
+    「只在开始前提醒」的原口径。
 
     防重：last_triggered 持久化，同一事件只提醒一次（重启不重发）；事件改期会
     重置该标记——Apple 同步（schedule_store.sync_from_apple_calendar）与工具
@@ -77,7 +89,8 @@ async def collect_due_schedule_items(
     habit（洗澡/睡觉/喝水）、全天事件、已停用条目不提醒。
 
     Returns:
-        list[dict]: 到点事件（item_id/title/start/end/minutes_until/context/source）
+        list[dict]: 到点事件（item_id/title/start/end/start_dt/minutes_until/
+            context/source）；start_dt 是绝对开始时刻，供调用方算补发关窗时刻。
     """
     now = datetime.now()
     due: list[dict[str, Any]] = []
@@ -95,7 +108,13 @@ async def collect_due_schedule_items(
             continue
 
         minutes_until = (item_dt - now).total_seconds() / 60
-        if not 0 < minutes_until <= minutes_before:
+        if minutes_until > minutes_before:
+            continue
+        if grace_minutes > 0:
+            # 宽限期：开始后仍留在候选集里，供调用方补发
+            if minutes_until < -grace_minutes:
+                continue
+        elif minutes_until <= 0:
             continue
 
         end_dt = parse_item_time(item.end_time) if item.end_time else None
@@ -106,6 +125,7 @@ async def collect_due_schedule_items(
                 "start": item_dt.strftime("%H:%M"),
                 "end": end_dt.strftime("%H:%M") if end_dt else "",
                 "minutes_until": int(minutes_until),
+                "start_dt": item_dt,
                 "context": (item.context or "").strip(),
                 "source": "apple" if item.apple_uid else "local",
             }
@@ -164,3 +184,28 @@ def build_schedule_reminder_intent(items: list[dict[str, Any]]) -> str:
         "日程提醒：以下日程快开始了，请自然地随口提醒用户"
         "（简短口语化，可带关切）：\n" + "\n".join(lines)
     )
+
+
+def build_fallback_text(items: list[dict[str, Any]]) -> str:
+    """麦麦没开口时插件直发的纯文本提醒（不拟人、不经过 LLM，多事件合并一条）。
+
+    这条消息由插件自己发出，用户看不到麦麦的语气，因此只写事实：标题、时间、
+    是否已到点。措辞与 build_schedule_reminder_intent 保持同一套时间标签。
+    """
+    lines = []
+    for it in items:
+        title = (it.get("title") or "").strip() or "无标题"
+        start = it.get("start") or ""
+        end = it.get("end") or ""
+        time_label = f"{start}-{end}" if start and end else start
+        minutes = int(it.get("minutes_until") or 0)
+        if minutes > 0:
+            timing = f"{time_label} 开始（还有 {minutes} 分钟）"
+        elif minutes == 0:
+            timing = f"{time_label} 马上开始"
+        else:
+            timing = f"{time_label} 已到时间（{abs(minutes)} 分钟前）"
+        lines.append(f"- 「{title}」{timing.strip()}")
+    if not lines:
+        return ""
+    return "日程提醒：\n" + "\n".join(lines)

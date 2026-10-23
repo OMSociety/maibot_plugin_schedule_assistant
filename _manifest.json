@@ -45,7 +45,7 @@
       "fallback": "package"
     }
   },
-  "capabilities": ["send.text", "send.custom", "chat.get_stream_by_user_id", "maisaka.proactive.trigger", "llm.generate", "config.get"],
+  "capabilities": ["send.text", "send.custom", "chat.get_stream_by_user_id", "maisaka.proactive.trigger", "message.get_recent", "llm.generate", "config.get"],
   "i18n": {
     "default_locale": "zh-CN",
     "supported_locales": ["zh-CN", "en-US", "ja-JP"]

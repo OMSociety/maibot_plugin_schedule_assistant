@@ -10,6 +10,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 from schedule_assistant.reminders.schedule import (
+    build_fallback_text,
     build_schedule_reminder_intent,
     collect_due_schedule_items,
     parse_item_time,
@@ -86,6 +87,24 @@ class TestCollectDueScheduleItems:
         store = _store(tmp_path)
         _add(store, time=_at(-5))
         assert _collect(store) == []
+
+    def test_grace_window_keeps_started_events_selectable(self, tmp_path):
+        """宽限期：开始后仍留在候选集里，供调用方补发再试一轮"""
+        store = _store(tmp_path)
+        _add(store, time=_at(-3))
+        due = asyncio.run(collect_due_schedule_items(store, "u", 10, grace_minutes=10))
+        assert len(due) == 1
+        assert due[0]["minutes_until"] <= 0
+        assert due[0]["start_dt"] is not None
+
+    def test_grace_window_expires(self, tmp_path):
+        """超出宽限期后不再入选：补发只有有限次机会，不会隔天重发"""
+        store = _store(tmp_path)
+        _add(store, time=_at(-12))
+        assert (
+            asyncio.run(collect_due_schedule_items(store, "u", 10, grace_minutes=10))
+            == []
+        )
 
     def test_habit_skipped(self, tmp_path):
         """habit（洗澡/睡觉/喝水）走独立定时任务，不进日程提醒"""
@@ -202,3 +221,29 @@ class TestBuildScheduleReminderIntent:
         assert intent.count("日程提醒：") == 1  # 多事件合并为一次开口
         assert "「组会」" in intent
         assert "「开会」" in intent
+
+
+class TestBuildFallbackText:
+    """兜底文案：麦麦没开口时插件直发的纯文本，不经 LLM"""
+
+    def test_merges_items_with_timing(self):
+        text = build_fallback_text(
+            [
+                {"title": "开会", "start": "17:00", "end": "18:00", "minutes_until": 8},
+                {"title": "吃药", "start": "18:00", "end": "", "minutes_until": 0},
+                {"title": "站会", "start": "18:05", "end": "", "minutes_until": -3},
+            ]
+        )
+        assert text.startswith("日程提醒：")
+        assert "- 「开会」17:00-18:00 开始（还有 8 分钟）" in text
+        assert "- 「吃药」18:00 马上开始" in text
+        assert "- 「站会」18:05 已到时间（3 分钟前）" in text
+
+    def test_missing_title_falls_back(self):
+        text = build_fallback_text(
+            [{"title": "", "start": "09:00", "minutes_until": 5}]
+        )
+        assert "- 「无标题」09:00 开始（还有 5 分钟）" in text
+
+    def test_empty_list_returns_empty(self):
+        assert build_fallback_text([]) == ""
