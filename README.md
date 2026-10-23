@@ -38,10 +38,10 @@
 ### 早安播报（固定格式）
 每天 `morning_report_time` 推送：称呼语 + 日期 + 天气 + 今日日程表格 + 待办表格，Markdown 排版。
 
-### 日程提醒（Maisaka 拟人开口 + 兜底送达）
+### 日程提醒（Maisaka 拟人开口，可选兜底送达）
 日程临近时（提前 `schedule_reminder_minutes` 分钟），本地日程与 Apple 日历事件统一调用 `ctx.maisaka.proactive.trigger()`，把提醒意图注入回复生命周期，由 Maisaka 基于人格自然开口；同一轮的多个事件合并为一次提醒。
 
-宿主接受这次请求只代表排上了一轮强制回复，麦麦仍可能一句话都不说。因此插件在请求开口后等一轮扫描，若该会话里没有麦麦发出的消息，就自己补发一条纯文本提醒（`enable_schedule_reminder_fallback`，默认开启）；只有确认送达才写防重标记，一次不开口不会吃掉这条日程本期的提醒。
+宿主接受这次请求只代表排上了一轮强制回复，麦麦仍可能一句话都不说。默认只请求开口（与旧版一致）；开启 `enable_schedule_reminder_fallback` 后，插件在请求开口后等一轮扫描，若该会话里没有麦麦发出的消息，就自己补发一条纯文本提醒，并且只有确认送达才写防重标记——一次不开口不会吃掉这条日程本期的提醒。
 
 ### 习惯提醒（Maisaka 拟人开口）
 洗澡 / 睡觉 / 喝水到点后，调用 `ctx.maisaka.proactive.trigger()` 让 Maisaka 基于人格自己决定怎么说、说多少。
@@ -91,7 +91,7 @@ MaiBot WebUI → 插件市场 → 搜索 `schedule_assistant`
 | `enable_schedule_reminder` | bool | `false` | 开启日程与 Apple 日历事件的提前提醒（Maisaka 拟人开口） |
 | `schedule_reminder_minutes` | int | `10` | 提前提醒分钟数 |
 | `schedule_reminder_check_interval` | int | `5` | 扫描间隔（分钟，最小 2，建议不大于提前提醒分钟数） |
-| `enable_schedule_reminder_fallback` | bool | `true` | 麦麦没开口时由插件补发纯文本提醒（关闭后只请求开口，不保证送达） |
+| `enable_schedule_reminder_fallback` | bool | `false` | 麦麦没开口时由插件补发纯文本提醒；开启后只有确认送达才写防重标记 |
 
 ### 习惯提醒
 

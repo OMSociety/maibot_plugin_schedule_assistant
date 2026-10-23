@@ -213,20 +213,21 @@ class ScheduleReminderSettingsConfig(PluginConfigBase):
         },
     )
     enable_schedule_reminder_fallback: bool = Field(
-        default=True,
+        default=False,
         description="麦麦没有开口时，到点由插件直接补发一条纯文本提醒（保证送达）",
         json_schema_extra={
             "label": "麦麦没开口时补发",
-            "hint": "关闭后只请求麦麦开口，不保证送达",
+            "hint": "开启后只有确认送达才写防重标记；关闭时只请求麦麦开口，不保证送达",
             "i18n": {
                 "en-US": {
                     "label": "Fallback Delivery When Maisaka Stays Silent",
-                    "hint": "When off, only Maisaka is asked to speak; delivery is not "
-                    "guaranteed",
+                    "hint": "When on, the de-duplication mark is written only after delivery "
+                    "is confirmed; when off, only Maisaka is asked to speak",
                 },
                 "ja-JP": {
                     "label": "Maisaka が話さない場合の補完送信",
-                    "hint": "オフにすると Maisaka への依頼だけになり、届く保証はありません",
+                    "hint": "オンにすると配信確認後にのみ重複防止マークを書き込みます。"
+                    "オフでは Maisaka への依頼だけになり、届く保証はありません",
                 },
             },
         },
@@ -1290,7 +1291,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             check_interval = max(
                 2, int(conf.get("schedule_reminder_check_interval", 5) or 5)
             )
-            fallback_enabled = bool(conf.get("enable_schedule_reminder_fallback", True))
+            fallback_enabled = bool(
+                conf.get("enable_schedule_reminder_fallback", False)
+            )
             # 宽限期让「开始后仍未送达」的事件继续留在候选集里，供补发再试；
             # 至少留两个扫描间隔，避免刚好错过最后一轮
             grace_minutes = (

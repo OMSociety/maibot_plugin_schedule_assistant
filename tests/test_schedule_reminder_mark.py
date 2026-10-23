@@ -183,7 +183,7 @@ def _install_sdk_stub() -> None:
 
 _install_sdk_stub()
 
-from schedule_assistant.plugin import ScheduleAssistantPlugin  # noqa: E402
+from schedule_assistant.plugin import ScheduleAssistantConfig, ScheduleAssistantPlugin  # noqa: E402
 
 
 class _FakeMessaging:
@@ -216,7 +216,10 @@ def _make_plugin(tmp_path, users=("u",), send_ok=True):
 
     plugin._apple_calendar_sync = _noop_sync
     plugin._ensure_services = _noop_services
-    plugin._flat_config = lambda: {"schedule_reminder_minutes": 10}
+    plugin._flat_config = lambda: {
+        "schedule_reminder_minutes": 10,
+        "enable_schedule_reminder_fallback": True,
+    }
     return plugin
 
 
@@ -349,6 +352,26 @@ class TestScheduleReminderScanWiring:
 
         assert asyncio.run(plugin.store.list_all_items("u"))[0].last_triggered
         assert plugin.messaging.sent == []
+
+    def test_missing_key_defaults_to_off(self, tmp_path):
+        """开关缺省（老配置未迁移）时按关闭处理：不补发，请求被接受即落标记"""
+        plugin = _make_plugin(tmp_path)
+        _add(plugin.store, "u", time=_at(5))
+
+        async def fake_maisaka(user_id, items):
+            return True
+
+        plugin._schedule_reminder_maisaka = fake_maisaka
+        plugin._flat_config = lambda: {"schedule_reminder_minutes": 10}
+        asyncio.run(plugin._schedule_reminder_scan())
+
+        assert asyncio.run(plugin.store.list_all_items("u"))[0].last_triggered
+        assert plugin.messaging.sent == []
+
+    def test_config_default_is_off(self):
+        """配置模型里兜底开关默认关闭"""
+        conf = ScheduleAssistantConfig()
+        assert conf.schedule_reminder.enable_schedule_reminder_fallback is False
 
     def test_trigger_exception_does_not_mark(self, tmp_path):
         """开口抛异常同样算失败：标记不落盘，异常被扫描层的 except 兜住"""
