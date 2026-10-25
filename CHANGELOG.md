@@ -10,6 +10,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2026-10-25
+
+### 变更
+
+- 收窄主程序兼容上界：`host_application.max_version` 由 `1.99.99` 改为 `1.3.99`，兼容范围落定为 MaiBot 1.0.0 至 1.3.x。
+
+### Changed
+
+- Narrowed the host compatibility upper bound: `host_application.max_version` changed from `1.99.99` to `1.3.99`, fixing the supported range at MaiBot 1.0.0 through 1.3.x.
+
 ## [1.2.2] - 2026-10-23
 
 ### 修复
