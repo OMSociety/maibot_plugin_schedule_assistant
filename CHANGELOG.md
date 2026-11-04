@@ -10,6 +10,46 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-11-04
+
+### 新增
+
+- CalDAV 服务器地址可配（`apple_caldav_host`，默认 `caldav.icloud.com`）：留空使用默认入口，填了就用填的；默认入口被拒绝认证时自动再试一次中国大陆区入口 `caldav.icloud.com.cn`，并说明实际生效的入口。
+- 首次成功发现日历时，日志以 INFO 列出「可用日历（apple_calendar_id 可填下列 UUID）」，逐个给出日历名称与 UUID。
+
+### 修复
+
+- **读取 Apple 日历不再丢弃 HTTP 状态码**：凭据未接受（401）、App 专用密码错误或失效（403）、网络不通、响应里没有 principal URL 分别给出可执行的原因，同一原因只报一次错误，不再笼统显示「CalDAV 未连接，无法创建事件」。
+- **读取不完整时不再删除本地日程**：CalDAV 未连接、列出日历失败、某个日历抓取失败、某个事件文件没拉到、WebCal 读取失败，任一环节失败都只做新增与更新，本轮保留本地日程；读取恢复后才恢复删除。
+- WebCal 读取按状态码判定成败，403/404 的错误页不再被当成「0 个日程」。
+- 工具回执不再虚报成功：没写入 Apple 日历、没更新 Apple 事件、没从 Apple 删除时如实说明。
+
+### 变更
+
+- `get_all_events` 改为返回事件列表与读取问题列表；`sync_from_apple_calendar` 必须显式传入是否允许删除。
+- 删除本地日程时以 INFO 说明条数；本轮未获删除授权时以 DEBUG 说明保留。
+- 创建、更新、删除时「CalDAV 未连接」由 ERROR 降为 WARNING（失败原因已由发现过程报出）。
+- `apple_calendar_id` 的配置提示改为指向日志里的可用日历清单。
+
+### Added
+
+- Configurable CalDAV server address (`apple_caldav_host`, default `caldav.icloud.com`): leave it empty to use the default entry, or fill in your own; when the default entry rejects the credentials the plugin retries the mainland China entry `caldav.icloud.com.cn` once and states which entry is in effect.
+- On the first successful calendar discovery the log lists the available calendars at INFO level with their names and UUIDs, so the value for `apple_calendar_id` can be read off directly.
+
+### Fixed
+
+- **Reading Apple calendars no longer discards HTTP status codes**: unaccepted credentials (401), a wrong or revoked app-specific password (403), an unreachable network, and a response without a principal URL now each produce an actionable reason, reported once per cause, instead of the generic "CalDAV not connected, cannot create event".
+- **Local schedules are no longer deleted when a read is incomplete**: CalDAV being unreachable, listing calendars failing, one calendar's fetch failing, one event file missing, or a WebCal read failing now all limit the round to additions and updates, keeping local schedules; deletions resume only after reads recover.
+- WebCal reads judge success by status code, so 403/404 error pages are no longer treated as "0 events".
+- Tool replies no longer claim success prematurely: a schedule that was not written to, updated in, or deleted from Apple Calendar is reported as such.
+
+### Changed
+
+- `get_all_events` now returns the event list together with a list of read problems; `sync_from_apple_calendar` requires an explicit delete permission.
+- Deleting local schedules is logged at INFO with the count; a round without delete permission logs at DEBUG why schedules were kept.
+- "CalDAV not connected" during create, update, and delete is logged at WARNING instead of ERROR (the cause has already been reported by the discovery step).
+- The `apple_calendar_id` hint now points at the available-calendars list in the log.
+
 ## [1.2.3] - 2026-10-25
 
 ### 变更

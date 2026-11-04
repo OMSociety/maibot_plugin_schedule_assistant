@@ -323,7 +323,8 @@ class TestCreateSchedule:
             create_schedule(plugin, "开会", "2026-09-10 14:30", "", "", MSG)
         )
         assert "已同步到 Apple 日历" not in res
-        assert "✅" in res  # 本地日程照常创建
+        assert "未写入 Apple 日历" in res
+        assert "✅" not in res  # 本地建了但 Apple 没写进去，不能只报成功
 
         item = asyncio.run(plugin.store.list_all_items("123"))[0]
         assert item.apple_uid is None
@@ -448,8 +449,12 @@ class TestUpdateSchedule:
                 update_schedule(plugin, item.id, "新标题", "2026-09-11 09:00", "", MSG)
             )
 
-        assert res == "已修改日程：标题改为「新标题」, 时间改为09-11 09:00 ✅"
+        assert res == (
+            "已修改日程：标题改为「新标题」, 时间改为09-11 09:00"
+            "，但未更新 Apple 日历（原因见日志）"
+        )
         assert "已更新 Apple 日历" not in res
+        assert "✅" not in res
         assert apple.update_calls[0]["uid"] == "uid-9"
 
         revived = asyncio.run(plugin.store.list_all_items("123"))[0]

@@ -515,15 +515,46 @@ class CalendarSyncSettingsConfig(PluginConfigBase):
         description="日历 ID（可留空）",
         json_schema_extra={
             "label": "日历 ID",
-            "hint": "可留空",
+            "hint": "留空使用第一个日历；可用值见日志里的「可用日历」清单",
             "i18n": {
                 "en-US": {
                     "label": "Calendar ID",
-                    "hint": "Can be left empty",
+                    "hint": "Leave empty to use the first calendar; see the "
+                    "available-calendar list in the log for valid UUIDs",
                 },
                 "ja-JP": {
                     "label": "カレンダー ID",
-                    "hint": "空欄可",
+                    "hint": "空欄なら最初のカレンダーを使用。有効な UUID は"
+                    "ログの「可用日历」一覧を参照",
+                },
+            },
+        },
+    )
+    apple_caldav_host: str = Field(
+        default="",
+        description="CalDAV 服务器地址（可留空）",
+        json_schema_extra={
+            "label": "CalDAV 服务器地址",
+            "placeholder": "caldav.icloud.com",
+            "hint": "留空使用 caldav.icloud.com。中国大陆区账号若被拒绝认证，"
+            "可填 caldav.icloud.com.cn；若该地址仍不通，填网页版 iCloud 日历"
+            "共享链接里自己的主机，形如 pXX-caldav.icloud.com.cn",
+            "i18n": {
+                "en-US": {
+                    "label": "CalDAV Server Host",
+                    "hint": "Leave empty to use caldav.icloud.com. Mainland-China "
+                    "accounts that get rejected can use caldav.icloud.com.cn; "
+                    "if that still fails, use the host shown in your iCloud web "
+                    "calendar share link, e.g. pXX-caldav.icloud.com.cn",
+                    "placeholder": "caldav.icloud.com",
+                },
+                "ja-JP": {
+                    "label": "CalDAV サーバー",
+                    "hint": "空欄なら caldav.icloud.com を使用。中国本土の"
+                    "アカウントで認証を拒否される場合は caldav.icloud.com.cn、"
+                    "それでも通らない場合は iCloud ウェブ版カレンダーの共有"
+                    "リンクにあるホスト（例: pXX-caldav.icloud.com.cn）を入力",
+                    "placeholder": "caldav.icloud.com",
                 },
             },
         },
@@ -841,6 +872,8 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         self._tasks_registered = False
         self._schedule_reminder_scan_lock = asyncio.Lock()
         self._apple_calendar_sync_lock = asyncio.Lock()
+        # 上一轮 Apple 读取不完整的原因：同一原因只提示一次，恢复后复位
+        self._last_apple_read_issue: str | None = None
         self._morning_ctx_cache: dict | None = None
         self._morning_ctx_ts = 0.0
         # 日程提醒的补发账本：key=user:item → 请求麦麦开口的时刻（进程内，不落盘）
@@ -881,6 +914,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             "username": c.calendar_sync.apple_username,
             "app_password": c.calendar_sync.apple_app_password,
             "calendar_id": c.calendar_sync.apple_calendar_id,
+            "caldav_host": c.calendar_sync.apple_caldav_host,
         }
         cfg["webcal_urls"] = c.calendar_sync.webcal_urls or []
         cfg["maton_api_key"] = c.external_services.maton_api_key
@@ -1005,6 +1039,8 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                         calendar_id=(apple_conf.get("calendar_id") or "").strip()
                         or None,
                         webcal_urls=conf.get("webcal_urls", []) or [],
+                        caldav_host=(apple_conf.get("caldav_host") or "").strip()
+                        or None,
                     )
 
             self._services_ready = True
@@ -1460,17 +1496,38 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             await self._refresh_apple_events_to_store()
 
     async def _refresh_apple_events_to_store(self) -> None:
-        """拉取 Apple 日历事件并同步进本地库（同步任务与提醒扫描共用）"""
+        """拉取 Apple 日历事件并同步进本地库（同步任务与提醒扫描共用）。
+
+        本轮只要有一处没读全（某日历抓取失败、某个 .ics 没拉到、WebCal 读取
+        失败），就只做新增与更新、不删除本地日程——否则 Apple 侧暂时读不到
+        会被当成「那边已删除」，本地日程随之消失。
+        """
         if not self.apple_calendar or not self.messaging:
             return
         try:
-            events = await self.apple_calendar.get_all_events(days=7)
+            events, issues = await self.apple_calendar.get_all_events(days=7)
             if not events:
                 return
+            reason = "；".join(issues)
+            if reason:
+                if reason != self._last_apple_read_issue:
+                    self.ctx.logger.warning(
+                        f"{LOG_PREFIX} Apple 日历读取不完整（{reason}），"
+                        "本轮只做新增与更新，不删除本地日程"
+                    )
+                else:
+                    self.ctx.logger.debug(
+                        f"{LOG_PREFIX} Apple 日历读取仍不完整，继续不删除本地日程"
+                    )
+                self._last_apple_read_issue = reason
+            else:
+                self._last_apple_read_issue = None
             for user_id in await self.messaging.resolve_target_users(
                 include_known_users=True
             ):
-                stats = await self.store.sync_from_apple_calendar(user_id, events)
+                stats = await self.store.sync_from_apple_calendar(
+                    user_id, events, allow_delete=not issues
+                )
                 if stats.get("added", 0) > 0:
                     self.ctx.logger.info(
                         f"{LOG_PREFIX} Apple→本地同步 user={user_id} "
@@ -1551,7 +1608,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         if not self.apple_calendar:
             return "暂无"
         try:
-            events = await self.apple_calendar.get_all_events(days=1)
+            events, _issues = await self.apple_calendar.get_all_events(days=1)
             today = datetime.now().date()
             rows = []
             for e in events:

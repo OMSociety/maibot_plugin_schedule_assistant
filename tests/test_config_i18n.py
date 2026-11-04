@@ -66,6 +66,7 @@ PURE_TECH = {
     "09:00",
     "qq:123456",
     "Apple ID",
+    "caldav.icloud.com",
     "{username} {date} {weekday} {weather_current} {agenda}…",
 }
 # 豁免：中日同形词且日语本身合法（最小=さいしょう）

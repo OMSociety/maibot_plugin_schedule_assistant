@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["AppleCalendar"]
 
+# CalDAV 发现入口。默认入口对中国大陆区账号同样可用，分区主机由 Apple 服务端
+# 在 principal / calendar-home-set 里下发；.com.cn 仅作为被 .com 拒绝认证时的
+# 备用入口（配置项 calendar_sync.apple_caldav_host 可覆盖两者）。
+CALDAV_ENTRY_URL = "https://caldav.icloud.com/"
+CALDAV_CN_ENTRY_URL = "https://caldav.icloud.com.cn/"
+
 
 def _escape_ics_text(text: str) -> str:
     """按 RFC 5545 转义 TEXT 值（反斜杠、分号、逗号、换行）。"""
@@ -43,6 +49,7 @@ class AppleCalendar:
         app_password: str | None = None,
         webcal_urls: list[str] | None = None,
         calendar_id: str | None = None,
+        caldav_host: str | None = None,
     ):
         self.username = username
         self.app_password = app_password
@@ -61,6 +68,9 @@ class AppleCalendar:
         self._last_ics_discovery_log_ts = 0.0
         self._last_ics_discovery_count: int | None = None
         self._calendar_id = calendar_id
+        self._caldav_entry_url = self._normalize_entry_url(caldav_host)
+        self._last_discover_reason: str | None = None
+        self._calendars_logged = False
 
     def _auth_header(self) -> str:
         creds = f"{self.username}:{self.app_password}"
@@ -139,25 +149,6 @@ class AppleCalendar:
         )
         return 0, None
 
-    async def _async_request(
-        self,
-        url: str,
-        method: str = "GET",
-        data: bytes | None = None,
-        headers: dict | None = None,
-        timeout: int = 30,
-        retries: int = 3,
-    ) -> str | None:
-        """向后兼容别名：直接委托给 _aiohttp_request（只要响应体文本）"""
-        return await self._aiohttp_request(
-            url,
-            method=method,
-            data=data,
-            headers=headers,
-            timeout=timeout,
-            retries=retries,
-        )
-
     @staticmethod
     def _clean_href(raw: str) -> str:
         href = html.unescape((raw or "").strip())
@@ -203,6 +194,67 @@ class AppleCalendar:
             return None
         return candidate
 
+    @staticmethod
+    def _normalize_entry_url(host: str | None) -> str:
+        """把配置里的主机整理成可打 PROPFIND 的入口 URL（留空用默认入口）。"""
+        text = (host or "").strip()
+        if not text:
+            return CALDAV_ENTRY_URL
+        if "://" not in text:
+            text = "https://" + text
+        return text.rstrip("/") + "/"
+
+    @staticmethod
+    def _extract_calendar_names(xml_text: str) -> dict[str, str]:
+        """从日历集合的 multistatus 里取 href → displayname。"""
+        if not xml_text:
+            return {}
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            return {}
+        names: dict[str, str] = {}
+        for elem in root.iter():
+            if not elem.tag.endswith("response"):
+                continue
+            href: str | None = None
+            displayname = ""
+            for child in elem.iter():
+                if child.tag.endswith("href") and child.text and href is None:
+                    href = AppleCalendar._clean_href(child.text)
+                elif child.tag.endswith("displayname"):
+                    displayname = (child.text or "").strip()
+            if href:
+                names.setdefault(href, displayname)
+        return names
+
+    def _describe_http_failure(self, status: int | None, body: str | None) -> str:
+        """把发现失败的状态码翻译成用户能照着做的一句话。"""
+        if status in (None, 0):
+            return "无法连接 Apple 服务器（网络不通或被拦截），请检查本机网络与代理"
+        if status == 401:
+            return (
+                "Apple 未接受凭据（HTTP 401），"
+                "请确认 Apple ID 邮箱与 App 专用密码都已填写"
+            )
+        if status == 403:
+            return (
+                "Apple 拒绝认证（HTTP 403）：App 专用密码错误或已失效，"
+                "需在 appleid.apple.com 重新生成「App 专用密码」，不能用 iCloud 登录密码"
+            )
+        snippet = (body or "").strip().replace("\n", " ")[:200]
+        if snippet:
+            return f"PROPFIND 返回 HTTP {status}: {snippet}"
+        return f"PROPFIND 返回 HTTP {status}"
+
+    def _report_discover_failure(self, reason: str) -> None:
+        """报告发现失败：同一原因每实例只报一次 ERROR，重复的降为 DEBUG。"""
+        if reason == self._last_discover_reason:
+            logger.debug(f"[AppleCalendar] CalDAV 发现失败：{reason}")
+            return
+        self._last_discover_reason = reason
+        logger.error(f"[AppleCalendar] CalDAV 发现失败：{reason}")
+
     async def _discover(self) -> bool:
         """发现 principal URL 和 calendar home set URL"""
         if self._discovered or not self.username or not self.app_password:
@@ -210,80 +262,112 @@ class AppleCalendar:
         async with self._discover_lock:
             if self._discovered:
                 return True
+            headers = {
+                "Authorization": self._auth_header(),
+                "Content-Type": "text/xml",
+            }
             body1 = b'<?xml version="1.0" encoding="UTF-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:current-user-principal/></D:prop></D:propfind>'
-            resp1 = await self._async_request(
-                "https://caldav.icloud.com/",
+            status1, resp1 = await self._request_with_status(
+                self._caldav_entry_url,
                 method="PROPFIND",
                 data=body1,
-                headers={
-                    "Authorization": self._auth_header(),
-                    "Content-Type": "text/xml",
-                },
+                headers=headers,
             )
-            if not resp1:
-                logger.debug("[AppleCalendar] CalDAV 发现失败，未配置 Apple 日历")
+            if status1 == 403 and self._caldav_entry_url == CALDAV_ENTRY_URL:
+                cn_status, cn_resp = await self._request_with_status(
+                    CALDAV_CN_ENTRY_URL,
+                    method="PROPFIND",
+                    data=body1,
+                    headers=headers,
+                )
+                if cn_status == 207:
+                    self._caldav_entry_url = CALDAV_CN_ENTRY_URL
+                    status1, resp1 = cn_status, cn_resp
+                    logger.info(
+                        "[AppleCalendar] caldav.icloud.com 拒绝凭据，"
+                        f"已改用中国大陆区入口 {CALDAV_CN_ENTRY_URL}"
+                    )
+                else:
+                    self._report_discover_failure(
+                        self._describe_http_failure(cn_status, cn_resp)
+                        + f"（已同时尝试中国大陆区入口 {CALDAV_CN_ENTRY_URL}）"
+                    )
+                    return False
+            if status1 != 207:
+                self._report_discover_failure(
+                    self._describe_http_failure(status1, resp1)
+                )
                 return False
-            principal_href = self._extract_href(resp1, "current-user-principal")
+            principal_href = self._extract_href(resp1 or "", "current-user-principal")
             if not principal_href:
                 # XML 解析失败时的降级提取（iCloud principal 形如 /<dsid>/principal/）。
                 # 捕获组已含前导斜杠，直接用作绝对路径：再补一个 "/" 会拼成
                 # "//<dsid>/principal"，被 urljoin 当网络路径引用、host 变成 dsid
-                m = re.search(r"(/\d+/\w+)/?$", resp1)
+                m = re.search(r"(/\d+/\w+)/?$", resp1 or "")
                 principal_href = m.group(1) if m else None
             if not principal_href:
-                logger.warning("[AppleCalendar] 无法解析 principal URL")
+                self._report_discover_failure("响应中没有 principal URL（HTTP 207）")
                 return False
             self._principal_url = self._to_absolute_url(
-                "https://caldav.icloud.com", principal_href
+                self._caldav_entry_url.rstrip("/"), principal_href
             )
             if not self._principal_url:
-                logger.debug("[AppleCalendar] principal URL 组装失败")
+                self._report_discover_failure("principal URL 组装失败")
                 return False
             logger.debug(f"[AppleCalendar] principal URL: {self._principal_url}")
             body2 = b'<?xml version="1.0" encoding="UTF-8"?><D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><C:calendar-home-set/></D:prop></D:propfind>'
-            resp2 = await self._async_request(
+            status2, resp2 = await self._request_with_status(
                 self._principal_url,
                 method="PROPFIND",
                 data=body2,
-                headers={
-                    "Authorization": self._auth_header(),
-                    "Content-Type": "text/xml",
-                },
+                headers=headers,
             )
-            if not resp2:
-                logger.debug("[AppleCalendar] principal URL 无响应，跳过日历发现")
+            if status2 != 207:
+                self._report_discover_failure(
+                    self._describe_http_failure(status2, resp2)
+                )
                 return False
-            cal_home_href = self._extract_href(resp2, "calendar-home-set")
+            cal_home_href = self._extract_href(resp2 or "", "calendar-home-set")
             if not cal_home_href:
                 # 降级提取：先找绝对 URL，再找 /<dsid>/calendars/ 相对路径。
                 # 同理，捕获组已含前导斜杠，不再补 "/"（补了会变成 //<dsid>/calendars/）
-                m = re.search(r"https?://[^\s<>\"']+/calendars/", resp2)
+                m = re.search(r"https?://[^\s<>\"']+/calendars/", resp2 or "")
                 if m:
                     cal_home_href = m.group(0).rstrip("/")
                 else:
-                    m = re.search(r"/(\d+/calendars/?)", resp2)
+                    m = re.search(r"/(\d+/calendars/?)", resp2 or "")
                     if m:
                         cal_home_href = "/" + m.group(1).rstrip("/")
             if not cal_home_href:
-                logger.warning("[AppleCalendar] 无法解析 calendar home set URL")
+                self._report_discover_failure(
+                    "响应中没有 calendar home set URL（HTTP 207）"
+                )
                 return False
             self._caldav_base_url = self._to_absolute_url(
                 self._principal_url, cal_home_href
             )
             if not self._caldav_base_url:
-                logger.debug("[AppleCalendar] calendar home set URL 组装失败")
+                self._report_discover_failure("calendar home set URL 组装失败")
                 return False
             self._caldav_base_domain = urlparse(self._caldav_base_url).netloc
             self._discovered = True
-            logger.debug(
-                f"[AppleCalendar] CalDAV 发现成功: base={self._caldav_base_url}"
+            self._last_discover_reason = None
+            logger.info(
+                f"[AppleCalendar] CalDAV 已连接: "
+                f"{self._caldav_entry_url.rstrip('/')} (base={self._caldav_base_url})"
             )
             return True
 
-    async def _caldav_fetch(self, cal_url: str, days: int = 30) -> list[dict]:
-        """纯异步 CalDAV 抓取：PROPFIND → 并发拉 .ics → 解析"""
+    async def _caldav_fetch_with_status(
+        self, cal_url: str, days: int = 30
+    ) -> tuple[list[dict], str | None]:
+        """纯异步 CalDAV 抓取：PROPFIND → 并发拉 .ics → 解析。
+
+        返回 (事件列表, 未完整原因)。原因非 None 表示这次列出的文件没有全部
+        读到，调用方不得据此判定事件已在 Apple 端删除。
+        """
         body = b'<?xml version="1.0" encoding="UTF-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:href/></D:prop></D:propfind>'
-        resp = await self._async_request(
+        status, resp = await self._request_with_status(
             cal_url.rstrip("/") + "/",
             method="PROPFIND",
             data=body,
@@ -293,11 +377,14 @@ class AppleCalendar:
                 "Depth": "1",
             },
         )
-        if not resp:
-            return []
+        if status != 207:
+            return [], (
+                "抓取日历事件失败（status="
+                f"{status if status is not None else '无响应'}）"
+            )
         ics_urls: list[str] = []
         seen_urls: set[str] = set()
-        for m in re.findall(r"<(?:D:)?href[^>]*>([^<]+)</(?:D:)?href>", resp):
+        for m in re.findall(r"<(?:D:)?href[^>]*>([^<]+)</(?:D:)?href>", resp or ""):
             href = m.strip()
             if href.endswith(".ics"):
                 if href.startswith("/"):
@@ -310,7 +397,7 @@ class AppleCalendar:
                     seen_urls.add(ics_url)
                     ics_urls.append(ics_url)
         if not ics_urls:
-            return []
+            return [], None
         now_ts = time.monotonic()
         current_count = len(ics_urls)
         if (
@@ -328,37 +415,47 @@ class AppleCalendar:
 
         results = await asyncio.gather(*[_fetch_one(u) for u in ics_urls])
         events: list[dict] = []
+        failed = 0
         for ics_data in results:
             if ics_data:
                 events.extend(self._parse_vevents(ics_data))
-        return events
+            else:
+                failed += 1
+        if failed:
+            return events, f"{failed}/{len(ics_urls)} 个事件文件未拉到"
+        return events, None
 
-    async def _list_calendars(self) -> list[dict]:
-        """列出所有日历，带缓存"""
+    async def _list_calendars_with_status(self) -> tuple[list[dict], str | None]:
+        """列出所有日历，带缓存；返回 (日历列表, 未完整原因)。"""
         now_ts = time.monotonic()
         if (
             self._calendars_cache
             and (now_ts - getattr(self, "_calendars_ts", 0))
             < self._calendars_cache_ttl_seconds
         ):
-            return list(self._calendars_cache)
+            return list(self._calendars_cache), None
         if not await self._discover():
-            return []
-        resp = await self._async_request(
+            return [], "CalDAV 未连接"
+        status, resp = await self._request_with_status(
             self._caldav_base_url + "/",
             method="PROPFIND",
-            data=b'<?xml version="1.0" encoding="UTF-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:href/></D:prop></D:propfind>',
+            data=b'<?xml version="1.0" encoding="UTF-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:href/><D:displayname/></D:prop></D:propfind>',
             headers={
                 "Authorization": self._auth_header(),
                 "Content-Type": "text/xml",
                 "Depth": "1",
             },
         )
-        if not resp:
-            return []
+        if status != 207:
+            reason = (
+                f"列出日历失败（status={status if status is not None else '无响应'}）"
+            )
+            logger.warning(f"[AppleCalendar] {reason}")
+            return [], reason
+        names = AppleCalendar._extract_calendar_names(resp or "")
         calendars = []
         seen_uuids = set()  # 去重
-        for m in re.findall(r"<(?:D:)?href[^>]*>([^<]+)</(?:D:)?href>", resp):
+        for m in re.findall(r"<(?:D:)?href[^>]*>([^<]+)</(?:D:)?href>", resp or ""):
             href = AppleCalendar._clean_href(m.strip())
             if not href:
                 continue
@@ -379,13 +476,26 @@ class AppleCalendar:
                     # 相对路径，使用 base_url 拼接
                     cal_url = f"{self._caldav_base_url.rstrip('/')}/{cal_uuid}"
                 calendars.append(
-                    {"href": href, "url": cal_url, "id": cal_uuid, "name": ""}
+                    {
+                        "href": href,
+                        "url": cal_url,
+                        "id": cal_uuid,
+                        "name": names.get(href, ""),
+                    }
                 )
         self._calendars = calendars
         self._calendars_cache = list(calendars)
         self._calendars_ts = time.monotonic()
         logger.debug(f"[AppleCalendar] 发现 {len(calendars)} 个日历")
-        return calendars
+        if calendars and not self._calendars_logged:
+            self._calendars_logged = True
+            logger.info(
+                "[AppleCalendar] 可用日历（apple_calendar_id 可填下列 UUID）:\n"
+                + "\n".join(
+                    f"  {c['name'] or '(未命名)'} → {c['id']}" for c in calendars
+                )
+            )
+        return calendars, None
 
     def _parse_vevents(self, ical_data: str) -> list[dict]:
         """解析 VEVENT，正确处理 UTC 和本地时区
@@ -554,28 +664,32 @@ class AppleCalendar:
             or ip.is_unspecified
         )
 
-    async def fetch_webcal_async(self, url: str, days: int = 30) -> list[dict]:
-        events = []
-        try:
-            # 防 SSRF：WebCal 地址必须为公网 https/http，拒绝内网/本地/云元数据地址
-            if not self._is_safe_webcal_url(url):
-                logger.warning(f"[AppleCalendar] 拒绝不安全的 WebCal 地址: {url}")
-                return events
-            http_url = url.replace("webcal://", "https://")
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(
-                    http_url,
-                    headers={"User-Agent": "Mozilla/5.0"},
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp,
-            ):
-                ical_data = await resp.text()
-            events = self._parse_vevents(ical_data)
-            logger.debug(f"[AppleCalendar] WebCal 读取成功: {len(events)} 个事件")
-        except Exception as e:
-            logger.warning(f"[AppleCalendar] WebCal 读取失败: {e}")
-        return events
+    async def fetch_webcal_with_status(
+        self, url: str, days: int = 30
+    ) -> tuple[list[dict], str | None]:
+        """读取一个 WebCal 订阅；返回 (事件, 未完整原因)。
+
+        原因串不含订阅地址与异常文本，避免把私有订阅链接写进日志。
+        """
+        events: list[dict] = []
+        # 防 SSRF：WebCal 地址必须为公网 https/http，拒绝内网/本地/云元数据地址
+        if not self._is_safe_webcal_url(url):
+            logger.warning("[AppleCalendar] 拒绝不安全的 WebCal 地址")
+            return events, "WebCal 地址不安全，已拒绝读取"
+        http_url = url.replace("webcal://", "https://")
+        status, text = await self._request_with_status(
+            http_url, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        if status != 200:
+            reason = (
+                "WebCal 读取失败（status="
+                f"{status if status is not None else '无响应'}）"
+            )
+            logger.warning(f"[AppleCalendar] {reason}")
+            return events, reason
+        events = self._parse_vevents(text or "")
+        logger.debug(f"[AppleCalendar] WebCal 读取成功: {len(events)} 个事件")
+        return events, None
 
     def _cleanup_expired_cache(self):
         """清理过期的缓存（只保留今天的缓存）"""
@@ -591,8 +705,13 @@ class AppleCalendar:
                 f"[AppleCalendar] 清理了 {len(expired_keys)} 个过期缓存键: {expired_keys}"
             )
 
-    async def get_all_events(self, days: int = 1) -> list[dict]:
-        """获取所有日历事件（带缓存，去重）"""
+    async def get_all_events(self, days: int = 1) -> tuple[list[dict], list[str]]:
+        """获取所有日历事件（带缓存，去重）。
+
+        返回 (事件列表, 未完整原因列表)。原因列表非空表示这一轮没有把所有
+        事件读全（某日历 PROPFIND 失败、某个 .ics 没拉到、WebCal 读取失败），
+        调用方不得据此判定事件已在 Apple 端删除。
+        """
         # 缓存键包含日期，避免跨天返回错误数据
         today = datetime.now().strftime("%Y%m%d")
         cache_key = f"{today}_{int(days if days else 1)}"
@@ -606,7 +725,7 @@ class AppleCalendar:
             logger.debug(
                 f"[AppleCalendar] 使用缓存 key={cache_key}, 事件数={len(cached.get('events', []))}"
             )
-            return list(cached.get("events", []))
+            return list(cached.get("events", [])), list(cached.get("issues", []))
 
         async with self._fetch_lock:
             # 双重检查：加锁后再检查缓存（可能被其他协程填充）
@@ -619,16 +738,25 @@ class AppleCalendar:
                 logger.debug(
                     f"[AppleCalendar] 使用缓存(锁内) key={cache_key}, 事件数={len(cached.get('events', []))}"
                 )
-                return list(cached.get("events", []))
+                return list(cached.get("events", [])), list(cached.get("issues", []))
 
             # 缓存不存在或已过期，重新获取
             all_events: dict[str, dict] = {}  # 用 dict 做去重，key 为 uid
+            issues: list[str] = []
 
             if self.username and self.app_password:
-                calendars = await self._list_calendars()
+                calendars, list_issue = await self._list_calendars_with_status()
+                if list_issue:
+                    issues.append(list_issue)
                 logger.debug(f"[AppleCalendar] 准备获取 {len(calendars)} 个日历的事件")
                 for cal in calendars:
-                    cal_events = await self._caldav_fetch(cal["url"], days)
+                    cal_events, fetch_issue = await self._caldav_fetch_with_status(
+                        cal["url"], days
+                    )
+                    if fetch_issue:
+                        issues.append(
+                            f"{cal.get('name') or cal.get('id', '?')}: {fetch_issue}"
+                        )
                     for evt in cal_events:
                         uid = evt.get("uid")
                         if uid:
@@ -638,24 +766,31 @@ class AppleCalendar:
                     )
 
             for url in self.webcal_urls:
-                webcal_events = await self.fetch_webcal_async(url, days)
+                webcal_events, webcal_issue = await self.fetch_webcal_with_status(
+                    url, days
+                )
+                if webcal_issue:
+                    issues.append(webcal_issue)
                 for evt in webcal_events:
                     uid = evt.get("uid")
                     if uid:
                         all_events[uid] = evt
                 logger.debug(
-                    f"[AppleCalendar] WebCal {url} 获取到 {len(webcal_events)} 个事件"
+                    f"[AppleCalendar] WebCal 获取到 {len(webcal_events)} 个事件"
                 )
 
             events_list = list(all_events.values())
             self._events_cache[cache_key] = {
                 "ts": time.monotonic(),
                 "events": events_list,
+                "issues": list(issues),
             }
+            detail = f"（不完整：{'；'.join(issues)}）" if issues else ""
             logger.info(
-                f"[AppleCalendar] get_all_events(days={days}, cache_key={cache_key}) 返回 {len(events_list)} 个事件（去重后）"
+                f"[AppleCalendar] get_all_events(days={days}, cache_key={cache_key}) "
+                f"返回 {len(events_list)} 个事件（去重后）{detail}"
             )
-            return events_list
+            return events_list, list(issues)
 
     def _resolve_calendar_id(
         self, calendars: list[dict], calendar_id: str | None
@@ -692,7 +827,7 @@ class AppleCalendar:
         成功（2xx）返回 uid，4xx/5xx/网络失败返回 None。
         """
         resolved_id = self._resolve_calendar_id(
-            await self._list_calendars(), calendar_id
+            (await self._list_calendars_with_status())[0], calendar_id
         )
         cal_url = f"{self._caldav_base_url}/{resolved_id}/"
         created = datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -750,9 +885,9 @@ class AppleCalendar:
         all_day: bool = False,
     ) -> str | None:
         if not await self._discover():
-            logger.error("[AppleCalendar] CalDAV 未连接，无法创建事件")
+            logger.warning("[AppleCalendar] CalDAV 未连接，无法创建事件")
             return None
-        if not await self._list_calendars():
+        if not (await self._list_calendars_with_status())[0]:
             logger.warning("[AppleCalendar] 未找到可写日历")
             return None
         return await self._upsert_event(
@@ -780,9 +915,9 @@ class AppleCalendar:
             logger.warning("[AppleCalendar] 缺少 UID，无法更新事件")
             return False
         if not await self._discover():
-            logger.error("[AppleCalendar] CalDAV 未连接，无法更新事件")
+            logger.warning("[AppleCalendar] CalDAV 未连接，无法更新事件")
             return False
-        if not await self._list_calendars():
+        if not (await self._list_calendars_with_status())[0]:
             logger.warning("[AppleCalendar] 未找到可写日历")
             return False
         updated_uid = await self._upsert_event(
@@ -798,9 +933,11 @@ class AppleCalendar:
 
     async def delete_event(self, uid: str, calendar_id: str | None = None) -> bool:
         if not await self._discover():
+            logger.warning("[AppleCalendar] CalDAV 未连接，无法删除事件")
             return False
-        calendars = await self._list_calendars()
+        calendars = (await self._list_calendars_with_status())[0]
         if not calendars:
+            logger.warning("[AppleCalendar] 未找到可写日历")
             return False
         resolved_id = self._resolve_calendar_id(calendars, calendar_id)
         cal_url = f"{self._caldav_base_url}/{resolved_id}/"
@@ -819,7 +956,7 @@ class AppleCalendar:
         pass
 
     async def get_late_night_events(self) -> list[dict]:
-        events = await self.get_all_events(days=1)
+        events, _issues = await self.get_all_events(days=1)
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         late_night_end = today + timedelta(hours=6)
         late_night = []
