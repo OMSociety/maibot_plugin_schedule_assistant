@@ -1,8 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/OMSociety/maibot_plugin_schedule_assistant/main/logo.png" width="120" alt="ScheduleAssistant Logo" />
-
-# Schedule Assistant 日程提醒助手
+<h1><img src="https://raw.githubusercontent.com/OMSociety/maibot_plugin_schedule_assistant/main/logo.png" width="192" alt="ScheduleAssistant Logo"><br>Schedule Assistant 日程提醒助手</h1>
 
 **贴心日程管家** —— 早安播报 · 日程智能提醒 · 习惯提醒 · Apple 日历同步 · Notion 待办
 
