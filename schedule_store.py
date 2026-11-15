@@ -1,453 +1,263 @@
-"""日程数据存储模块（MaiBot 插件版）
+"""日程存储：data_dir/schedule_data.json，按键 `schedules_<用户裸ID>` 存列表。
 
-提供日程和习惯的数据持久化，基于 MaiBot 插件数据目录（ctx.paths.data_dir）下的
-JSON 文件（替代 AstrBot 内置 KV API）。
-支持单次日程、定期习惯、喝水记录、临时覆盖等数据管理。
+只保留日程本身；习惯/喝水时间戳等旧键不再读写（旧文件里的数据原样保留）。
 """
 
+from __future__ import annotations
+
+import asyncio
 import json
-import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from .constants import (
-    HABITS_KEY,
-    LOG_PREFIX,
-    SCHEDULES_KEY,
-    WATER_LAST_KEY,
-)
-from .messaging import parse_user_target
+from .constants import LOG_PREFIX
 
-logger = logging.getLogger(__name__)
-
-__all__ = ["ScheduleItem", "ScheduleStore"]
-
-
-def _bare_user_id(user_id: str) -> str:
-    """把用户标识归一化为裸 ID（存储键统一口径）。
-
-    历史上定时路径用配置原值（qq:123456）做键，而 @Tool 写入路径经
-    parse_user_target 取裸 ID，导致同一用户两套键、早安播报读不到
-    工具创建的日程。现在所有存取统一取裸 ID，平台前缀在发送侧还原。
-    """
-    _, bare = parse_user_target(user_id)
-    return bare or str(user_id or "").strip()
-
-
-def _schedules_key(user_id: str) -> str:
-    return f"schedules_{user_id}"
-
-
-def _habits_key(user_id: str) -> str:
-    return f"habits_{user_id}"
-
-
-def _water_key(user_id: str) -> str:
-    return f"water_last_{user_id}"
-
-
-_USERS_KEY = "_users"
-_CACHE_TTL_SECONDS = 30.0
+_CACHE_TTL_SECONDS = 30
 
 
 @dataclass
 class ScheduleItem:
-    """日程/习惯数据项"""
-
-    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    type: str = ""
+    id: str = ""
     title: str = ""
     time: str = ""
     end_time: str | None = None
-    recur: str | None = None
     context: str = ""
-    enabled: bool = True
-    snoozed_until: str | None = None
-    last_triggered: str | None = None
-    temp_override: str | None = None
     apple_uid: str | None = None
     all_day: bool = False
+    last_triggered: str | None = None
 
-    def to_dict(self) -> dict:
-        """序列化为字典"""
+    def __post_init__(self) -> None:
+        if not self.id:
+            self.id = uuid.uuid4().hex[:8]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        title: str,
+        time: str,
+        end_time: str | None = None,
+        context: str = "",
+        apple_uid: str | None = None,
+        all_day: bool = False,
+    ) -> "ScheduleItem":
+        return cls(
+            title=title,
+            time=time,
+            end_time=end_time,
+            context=context,
+            apple_uid=apple_uid,
+            all_day=all_day,
+        )
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ScheduleItem":
+        allowed = {field.name for field in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in allowed})
+
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-    @staticmethod
-    def from_dict(data: dict) -> "ScheduleItem":
-        """从字典反序列化，过滤未知字段"""
-        valid_fields = {
-            "id",
-            "type",
-            "title",
-            "time",
-            "end_time",
-            "recur",
-            "context",
-            "enabled",
-            "snoozed_until",
-            "last_triggered",
-            "temp_override",
-            "apple_uid",
-            "all_day",
-        }
-        filtered = {k: v for k, v in data.items() if k in valid_fields}
-        if not filtered.get("id"):
-            filtered["id"] = str(uuid.uuid4())[:8]
-        return ScheduleItem(**filtered)
 
 
 class ScheduleStore:
-    """日程数据存储器（MaiBot 版：JSON 文件 + 内存缓存）
-
-    底层存储：data_dir/schedule_data.json（插件数据目录，ctx.paths.data_dir），
-    整体读写 + 短期内存缓存。插件在 on_load 时调用 set_data_dir 注入目录。
-    """
-
-    def __init__(self):
+    def __init__(self, logger=None) -> None:
+        self.logger = logger
         self._data_dir: Path | None = None
-        self._cache: dict[str, tuple[Any, float]] = {}
-        self._migrated = False
-        logger.info(f"{LOG_PREFIX} ScheduleStore 初始化完成")
+        self._lock = asyncio.Lock()
+        self._cache: dict[str, Any] | None = None
+        self._cache_ts = 0.0
 
     def set_data_dir(self, data_dir: str | Path) -> None:
-        """注入数据目录（MaiBot 插件在 on_load 传 self.ctx.paths.data_dir）"""
         self._data_dir = Path(data_dir)
         self._data_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def _db_path(self) -> Path:
         if self._data_dir is None:
-            raise RuntimeError("ScheduleStore 未注入数据目录（set_data_dir 未调用）")
+            raise RuntimeError("ScheduleStore 未注入数据目录")
         return self._data_dir / "schedule_data.json"
 
-    async def _load_all(self) -> dict[str, Any]:
-        """读取整个 JSON 数据文件（不存在返回空 dict），首次加载时迁移旧键"""
+    def _read_all(self) -> dict[str, Any]:
+        now = time.monotonic()
+        if self._cache is not None and now - self._cache_ts < _CACHE_TTL_SECONDS:
+            return self._cache
         try:
-            raw = self._db_path.read_text(encoding="utf-8")
-            data = json.loads(raw)
-            data = data if isinstance(data, dict) else {}
+            data = json.loads(self._db_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            return {}
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"{LOG_PREFIX} 数据文件读取失败，按空数据继续: {e}")
-            return {}
-        if not self._migrated:
-            self._migrated = True
-            if self._migrate_legacy_keys(data):
-                await self._save_all(data)
+            data = {}
+        except (json.JSONDecodeError, OSError) as exc:
+            self.logger.warning(f"{LOG_PREFIX} 日程文件读取失败，按空数据处理: {exc}")
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        self._cache = data
+        self._cache_ts = now
         return data
 
-    @staticmethod
-    def _migrate_legacy_keys(data: dict[str, Any]) -> bool:
-        """把旧版 platform:id 形式的存储键迁移为裸 ID 键（原地修改）。
-
-        旧版本定时路径以配置原值（如 qq:123456）做键，与 @Tool 写入的
-        裸 ID 键并存；统一到裸 ID 后重命名旧键，避免既有数据失联。
-
-        Returns:
-            bool: 数据是否有变更（需要写回）
-        """
-        changed = False
-        for prefix in ("schedules_", "habits_", "water_last_", "user_platform_"):
-            for key in [
-                k
-                for k in data
-                if isinstance(k, str)
-                and k.startswith(prefix)
-                and ":" in k[len(prefix) :]
-            ]:
-                bare = key[len(prefix) :].split(":", 1)[1].strip()
-                if bare:
-                    new_key = prefix + bare
-                    if new_key not in data:
-                        data[new_key] = data[key]
-                del data[key]
-                changed = True
-        users = data.get(_USERS_KEY)
-        if isinstance(users, list):
-            new_users: list[str] = []
-            for u in users:
-                bare = _bare_user_id(str(u))
-                if bare and bare not in new_users:
-                    new_users.append(bare)
-            if new_users != [str(u) for u in users]:
-                changed = True
-            data[_USERS_KEY] = new_users
-        return changed
-
-    async def _save_all(self, data: dict[str, Any]) -> None:
-        """整体写回 JSON 数据文件"""
+    def _write_all(self, data: dict[str, Any]) -> None:
         try:
             tmp = self._db_path.with_suffix(".json.tmp")
             tmp.write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
             tmp.replace(self._db_path)
-        except OSError as e:
-            logger.error(f"{LOG_PREFIX} 数据文件写入失败: {e}")
+            self._cache = data
+            self._cache_ts = time.monotonic()
+        except OSError as exc:
+            self.logger.error(f"{LOG_PREFIX} 日程文件写入失败: {exc}")
 
-    async def _get_kv(self, key: str, default=None):
-        """读取 KV（JSON 顶层键），带短期内存缓存"""
-        now = time.monotonic()
-        if key in self._cache:
-            value, ts = self._cache[key]
-            if now - ts < _CACHE_TTL_SECONDS:
-                return value
-        data = await self._load_all()
-        value = data.get(key, default)
-        self._cache[key] = (value, now)
-        return value
+    @staticmethod
+    def _key(user_id: str) -> str:
+        return f"schedules_{user_id}"
 
-    async def _set_kv(self, key: str, value) -> None:
-        """写入 KV（JSON 顶层键）并更新缓存"""
-        self._cache[key] = (value, time.monotonic())
-        data = await self._load_all()
-        data[key] = value
-        await self._save_all(data)
+    def _raw_items(self, user_id: str) -> list[dict]:
+        raw = self._read_all().get(self._key(user_id), [])
+        return raw if isinstance(raw, list) else []
 
-    async def _get_user_index(self) -> list[str]:
-        users = await self._get_kv(_USERS_KEY, [])
-        return [str(u) for u in users if u]
+    async def list_items(self, user_id: str) -> list[ScheduleItem]:
+        return [ScheduleItem.from_dict(item) for item in self._raw_items(user_id)]
 
-    async def _save_user_index(self, users: list[str]) -> None:
-        uniq = sorted({str(u) for u in users if u})
-        await self._set_kv(_USERS_KEY, uniq)
-
-    async def _touch_user(self, user_id: str) -> None:
-        if not user_id:
-            return
-        users = await self._get_user_index()
-        if user_id not in users:
-            users.append(user_id)
-            await self._save_user_index(users)
-
-    async def _load_user_data(self, user_id: str) -> dict[str, Any]:
-        """向后兼容：从旧版统一 data 键迁移数据"""
-        user_id = _bare_user_id(user_id)
-        data: dict[str, Any] = {
-            SCHEDULES_KEY: [],
-            HABITS_KEY: [],
-            WATER_LAST_KEY: "",
-        }
-        schedules = await self._get_kv(_schedules_key(user_id), [])
-        if schedules:
-            data[SCHEDULES_KEY] = schedules
-        habits = await self._get_kv(_habits_key(user_id), [])
-        if habits:
-            data[HABITS_KEY] = habits
-        water = await self._get_kv(_water_key(user_id), "")
-        if water:
-            data[WATER_LAST_KEY] = water
-        return data
-
-    async def _save_user_data(self, user_id: str, data: dict[str, Any]) -> None:
-        user_id = _bare_user_id(user_id)
-        await self._set_kv(_schedules_key(user_id), data.get(SCHEDULES_KEY, []))
-        await self._set_kv(_habits_key(user_id), data.get(HABITS_KEY, []))
-        await self._set_kv(_water_key(user_id), data.get(WATER_LAST_KEY, ""))
-        await self._touch_user(user_id)
+    async def get_item(self, user_id: str, item_id: str) -> ScheduleItem | None:
+        return next(
+            (item for item in await self.list_items(user_id) if item.id == item_id),
+            None,
+        )
 
     async def add_item(self, user_id: str, item: ScheduleItem) -> None:
-        data = await self._load_user_data(user_id)
-        item_dict = item.to_dict()
-        if item.type == "habit":
-            data[HABITS_KEY] = [
-                h for h in data[HABITS_KEY] if h.get("title") != item.title
-            ]
-            data[HABITS_KEY].append(item_dict)
-        else:
-            data[SCHEDULES_KEY].append(item_dict)
-        await self._save_user_data(user_id, data)
+        async with self._lock:
+            data = self._read_all()
+            items = list(data.get(self._key(user_id), []))
+            if any(existing.get("id") == item.id for existing in items):
+                item.id = uuid.uuid4().hex[:8]
+            items.append(item.to_dict())
+            data[self._key(user_id)] = items
+            self._write_all(data)
 
-    async def list_all_items(self, user_id: str) -> list[ScheduleItem]:
-        data = await self._load_user_data(user_id)
-        items = []
-        for s in data.get(SCHEDULES_KEY, []):
-            items.append(ScheduleItem.from_dict(s))
-        for h in data.get(HABITS_KEY, []):
-            items.append(ScheduleItem.from_dict(h))
-        return items
-
-    async def get_schedules(self, user_id: str) -> dict[str, list[ScheduleItem]]:
-        data = await self._load_user_data(user_id)
-        return {
-            SCHEDULES_KEY: [
-                ScheduleItem.from_dict(s) for s in data.get(SCHEDULES_KEY, [])
-            ],
-            HABITS_KEY: [ScheduleItem.from_dict(h) for h in data.get(HABITS_KEY, [])],
-        }
-
-    async def get_all_users(self) -> list[str]:
-        return sorted(set(await self._get_user_index()))
+    async def update_item(self, user_id: str, item: ScheduleItem) -> bool:
+        async with self._lock:
+            data = self._read_all()
+            items = list(data.get(self._key(user_id), []))
+            for index, existing in enumerate(items):
+                if existing.get("id") == item.id:
+                    items[index] = item.to_dict()
+                    data[self._key(user_id)] = items
+                    self._write_all(data)
+                    return True
+            return False
 
     async def remove_item(self, user_id: str, item_id: str) -> bool:
-        data = await self._load_user_data(user_id)
-        before = len(data.get(SCHEDULES_KEY, [])) + len(data.get(HABITS_KEY, []))
-        data[SCHEDULES_KEY] = [
-            s for s in data.get(SCHEDULES_KEY, []) if s.get("id") != item_id
-        ]
-        data[HABITS_KEY] = [
-            h for h in data.get(HABITS_KEY, []) if h.get("id") != item_id
-        ]
-        after = len(data.get(SCHEDULES_KEY, [])) + len(data.get(HABITS_KEY, []))
-        if before != after:
-            await self._save_user_data(user_id, data)
+        async with self._lock:
+            data = self._read_all()
+            items = list(data.get(self._key(user_id), []))
+            kept = [item for item in items if item.get("id") != item_id]
+            if len(kept) == len(items):
+                return False
+            data[self._key(user_id)] = kept
+            self._write_all(data)
             return True
-        return False
 
-    async def update_item(self, user_id: str, item: "ScheduleItem") -> bool:
-        data = await self._load_user_data(user_id)
-        item_dict = item.to_dict()
-        for key in [SCHEDULES_KEY, HABITS_KEY]:
-            for i, stored in enumerate(data.get(key, [])):
-                if stored.get("id") == item.id:
-                    data[key][i] = item_dict
-                    await self._save_user_data(user_id, data)
-                    return True
-        return False
+    @staticmethod
+    def _event_time(value: str, tz: ZoneInfo) -> tuple[str, datetime] | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(tz)
+        return parsed.strftime("%Y-%m-%d %H:%M"), parsed.replace(tzinfo=None)
 
     async def sync_from_apple_calendar(
-        self, user_id: str, apple_events: list[dict], *, allow_delete: bool
+        self,
+        user_id: str,
+        apple_events: list[dict],
+        *,
+        allow_delete: bool,
+        now: datetime,
     ) -> dict[str, int]:
-        """把 Apple 事件并入本地日程。
-
-        Args:
-            user_id: 用户标识。
-            apple_events: 本轮从 Apple 读到的事件。
-            allow_delete: 只有确认本轮读取完整时才可传 True；为 False 时本地
-                日程一条都不删，避免 Apple 侧暂时读不到就把本地数据清掉。
-        """
-        # 防御：API 返回空列表时（可能是失败），不执行删除，避免误删
-        if not apple_events:
-            logger.debug(f"{LOG_PREFIX} Apple 日历返回空事件列表，跳过同步")
-            return {"added": 0, "updated": 0, "deleted": 0}
-        data = await self._load_user_data(user_id)
-        schedules = data.get(SCHEDULES_KEY, [])
-        uid_map = {s["apple_uid"]: s for s in schedules if s.get("apple_uid")}
-        apple_uids = set()
+        """把 Apple 事件并入本地日程；空事件列表直接跳过，避免误删。"""
         stats = {"added": 0, "updated": 0, "deleted": 0}
-
-        # 只同步未来 7 天内的日程
-        now = datetime.now()
-        future_cutoff = now + timedelta(days=7)
-
-        # 防止重复添加：记录本次同步中已处理的 UID（解决 Apple 返回重复事件的问题）
-        processed_uids_this_sync: set[str] = set()
-
-        for evt in apple_events:
-            uid = evt.get("uid")
-            if not uid:
-                continue
-
-            # 防止同一个 UID 被添加两次（Apple 有时会返回重复的 RRULE 实例）
-            if uid in processed_uids_this_sync:
-                logger.debug(
-                    f"{LOG_PREFIX} 跳过重复 UID: {uid[:16]}... (事件: {evt.get('summary', '无标题')})"
-                )
-                # 成员资格由首个实例决定（窗口外被 discard 的不再加回）
-                continue
-
-            apple_uids.add(uid)
-            # 无论走哪个分支都视为已处理，重复实例在下一轮循环被拦下
-            processed_uids_this_sync.add(uid)
-            start_str = evt.get("start", "")
-            if not start_str:
-                continue
-            try:
-                start_dt = datetime.fromisoformat(start_str)
-                # 过滤：只保留未来 7 天内的日程
-                if start_dt < now - timedelta(days=1):  # 1天前的也保留（刚结束的）
-                    logger.debug(
-                        f"{LOG_PREFIX} 跳过过期日程: {evt.get('summary', '无标题')} ({start_str})"
-                    )
-                    apple_uids.discard(uid)  # 不保留在 apple_uids 中，允许后续删除
+        if not apple_events:
+            return stats
+        tz = now.tzinfo or ZoneInfo("Asia/Shanghai")
+        now_naive = now.replace(tzinfo=None)
+        async with self._lock:
+            data = self._read_all()
+            items = list(data.get(self._key(user_id), []))
+            by_uid = {
+                item["apple_uid"]: item for item in items if item.get("apple_uid")
+            }
+            seen_uids: set[str] = set()
+            apple_uids: set[str] = set()
+            for event in apple_events:
+                uid = event.get("uid")
+                if not uid:
                     continue
-                if start_dt > future_cutoff:
-                    logger.debug(
-                        f"{LOG_PREFIX} 跳过远期日程: {evt.get('summary', '无标题')} ({start_str})"
-                    )
-                    apple_uids.discard(uid)  # 不保留在 apple_uids 中，允许后续删除
+                apple_uids.add(uid)
+                if uid in seen_uids:
                     continue
-                schedule_time = (
-                    start_dt.strftime("%Y-%m-%d")
-                    if evt.get("all_day")
-                    else start_dt.strftime("%Y-%m-%d %H:%M")
-                )
-            except (ValueError, TypeError):
-                schedule_time = start_str
-            # 结束时间（区间日程）：全天事件不记 end
-            end_str = None
-            end_raw = evt.get("end") or ""
-            if end_raw and not evt.get("all_day"):
-                try:
-                    end_str = datetime.fromisoformat(end_raw).strftime("%Y-%m-%d %H:%M")
-                except (ValueError, TypeError):
-                    end_str = str(end_raw)
-            if uid in uid_map:
-                local = uid_map[uid]
-                if (
-                    local.get("title") != evt.get("summary")
-                    or local.get("time") != schedule_time
-                    or local.get("end_time") != end_str
-                ):
-                    # 改期（时间/结束时间变化）重置防重标记，让新时间重新提前提醒；
-                    # 旧数据无 end_time 键时首轮补齐不算改期，避免升级后重复提醒
-                    end_changed = (
-                        "end_time" in local and local.get("end_time") != end_str
-                    )
-                    if local.get("time") != schedule_time or end_changed:
-                        local["last_triggered"] = None
-                    local["title"] = evt.get("summary", "无标题")
-                    local["time"] = schedule_time
-                    local["end_time"] = end_str
-                    local["all_day"] = bool(evt.get("all_day", False))
-                    stats["updated"] += 1
-            else:
-                schedules.append(
-                    ScheduleItem(
-                        type="schedule",
-                        title=evt.get("summary", "无标题"),
-                        time=schedule_time,
-                        end_time=end_str,
-                        context=evt.get("description", ""),
+                seen_uids.add(uid)
+                start = self._event_time(event.get("start", ""), tz)
+                if start is None:
+                    continue
+                start_text, start_dt = start
+                if start_dt < now_naive - timedelta(days=1):
+                    apple_uids.discard(uid)
+                    continue
+                if start_dt > now_naive + timedelta(days=7):
+                    apple_uids.discard(uid)
+                    continue
+                all_day = bool(event.get("all_day"))
+                time_text = start_dt.strftime("%Y-%m-%d") if all_day else start_text
+                end_text = None
+                if not all_day and event.get("end"):
+                    end = self._event_time(event.get("end"), tz)
+                    if end is not None:
+                        end_text = end[0]
+                title = event.get("summary", "无标题")
+                context = event.get("description", "") or ""
+                existing = by_uid.get(uid)
+                if existing is None:
+                    item = ScheduleItem.create(
+                        title=title,
+                        time=time_text,
+                        end_time=end_text,
+                        context=context,
                         apple_uid=uid,
-                        all_day=evt.get("all_day", False),
-                    ).to_dict()
-                )
-                stats["added"] += 1
-        before_count = len(schedules)
-        if allow_delete:
-            schedules = [
-                s
-                for s in schedules
-                if not s.get("apple_uid") or s["apple_uid"] in apple_uids
-            ]
-            stats["deleted"] = before_count - len(schedules)
-            if stats["deleted"]:
-                logger.info(
-                    f"{LOG_PREFIX} 已删除 {stats['deleted']} 条在 Apple 端已不存在的本地日程"
-                )
-        else:
-            logger.debug(f"{LOG_PREFIX} 未获删除授权，本轮保留本地日程")
-        # 无变化不写盘（提醒扫描每轮都会刷新同步，避免无谓 IO）
-        if stats["added"] or stats["updated"] or stats["deleted"]:
-            data[SCHEDULES_KEY] = schedules
-            await self._save_user_data(user_id, data)
+                        all_day=all_day,
+                    )
+                    items.append(item.to_dict())
+                    stats["added"] += 1
+                    continue
+                if (
+                    existing.get("title") != title
+                    or existing.get("time") != time_text
+                    or existing.get("end_time") != end_text
+                    or existing.get("context") != context
+                    or bool(existing.get("all_day")) != all_day
+                ):
+                    existing["title"] = title
+                    existing["time"] = time_text
+                    existing["end_time"] = end_text
+                    existing["context"] = context
+                    existing["all_day"] = all_day
+                    existing["last_triggered"] = None
+                    stats["updated"] += 1
+            if allow_delete:
+                kept = [
+                    item
+                    for item in items
+                    if not item.get("apple_uid") or item["apple_uid"] in apple_uids
+                ]
+                stats["deleted"] = len(items) - len(kept)
+                items = kept
+            if stats["added"] or stats["updated"] or stats["deleted"]:
+                data[self._key(user_id)] = items
+                self._write_all(data)
         return stats
-
-    async def clear_expired_overrides(self, user_id: str) -> None:
-        """清理过期的临时覆盖"""
-        data = await self._load_user_data(user_id)
-        today = datetime.now().strftime("%Y-%m-%d")
-        changed = False
-        for habit in data.get(HABITS_KEY, []):
-            temp = habit.get("temp_override", "")
-            if temp and not temp.startswith(today):
-                habit.pop("temp_override", None)
-                changed = True
-        if changed:
-            await self._save_user_data(user_id, data)

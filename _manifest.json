@@ -1,24 +1,27 @@
 {
   "manifest_version": 2,
   "id": "omsociety.schedule-assistant",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "name": "日程提醒助手",
-  "description": "贴心日程管家，支持早安播报、习惯提醒、LLM 智能日程管理、Apple 日历双向同步、Notion 待办同步",
+  "description": "贴心日程管家：早安播报、习惯提醒、日程管理与提醒，全部推送交给 Maisaka 主动发起",
   "author": {
     "name": "OMSociety",
     "url": "https://github.com/OMSociety"
   },
   "license": "AGPL-3.0",
   "urls": {
-    "repository": "https://github.com/OMSociety/maibot_plugin_schedule_assistant"
+    "repository": "https://github.com/OMSociety/maibot_plugin_schedule_assistant",
+    "homepage": "https://github.com/OMSociety/maibot_plugin_schedule_assistant",
+    "documentation": "https://github.com/OMSociety/maibot_plugin_schedule_assistant#readme",
+    "issues": "https://github.com/OMSociety/maibot_plugin_schedule_assistant/issues"
   },
   "host_application": {
-    "min_version": "1.0.0",
-    "max_version": "1.3.99"
+    "min_version": "1.4.5",
+    "max_version": "1.4.99"
   },
   "sdk": {
-    "min_version": "1.0.0",
-    "max_version": "2.99.99"
+    "min_version": "2.23.0",
+    "max_version": "2.23.99"
   },
   "dependencies": [
     {
@@ -45,7 +48,7 @@
       "fallback": "package"
     }
   },
-  "capabilities": ["send.text", "send.custom", "chat.get_stream_by_user_id", "maisaka.proactive.trigger", "message.get_recent", "llm.generate", "config.get"],
+  "capabilities": ["chat.get_stream_by_user_id", "maisaka.proactive.trigger", "config.get"],
   "i18n": {
     "default_locale": "zh-CN",
     "supported_locales": ["zh-CN", "en-US", "ja-JP"]

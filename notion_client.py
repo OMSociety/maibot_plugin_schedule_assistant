@@ -9,6 +9,7 @@ import asyncio
 import time
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -21,9 +22,16 @@ class NotionClient:
     """通过 Maton Gateway 获取未完成任务（纯异步）"""
 
     def __init__(
-        self, api_key: str = "", transaction_db_id: str = "", reading_db_id: str = ""
+        self,
+        api_key: str = "",
+        transaction_db_id: str = "",
+        reading_db_id: str = "",
+        logger=None,
+        timezone: ZoneInfo | None = None,
     ):
         self._api_key = api_key
+        self._logger = logger
+        self._tz = timezone
         self._db_ids: dict[str, str] = {}
         if transaction_db_id:
             self._db_ids["事务"] = transaction_db_id
@@ -83,40 +91,47 @@ class NotionClient:
                 await asyncio.sleep(0.5 * (attempt + 1))
         return {"error": f"请求失败（已重试{retries}次）: {last_error}"}
 
+    def _now(self) -> datetime:
+        return datetime.now(self._tz) if self._tz else datetime.now().astimezone()
+
+    def _warn(self, message: str) -> None:
+        if self._logger:
+            self._logger.warning(message)
+
     def _relevant(self, ddl: str | None) -> bool:
         if not ddl:
             return True
         try:
-            due = (
-                datetime.fromisoformat(ddl.replace("Z", "+00:00"))
-                .astimezone()
-                .replace(tzinfo=None)
-            )
-            # 已过期或 7 天内到期都视为相关（前一个条件蕴含于后者，合并即可）
-            return due <= datetime.now() + timedelta(days=7)
+            due = datetime.fromisoformat(ddl.replace("Z", "+00:00"))
+            if due.tzinfo is None:
+                due = due.replace(tzinfo=self._now().tzinfo)
+            return due <= self._now() + timedelta(days=7)
         except Exception:
             return True
 
-    @staticmethod
-    def _parse_ddl_for_sort(ddl: str | None) -> datetime:
+    def _parse_ddl_for_sort(self, ddl: str | None) -> datetime:
         if not ddl:
             return datetime.max
         try:
-            # 统一转本地时区后排序，随后去掉 tzinfo，
-            # 避免混用 aware/naive datetime 触发比较异常。
-            return (
-                datetime.fromisoformat(ddl.replace("Z", "+00:00"))
-                .astimezone()
-                .replace(tzinfo=None)
-            )
+            parsed = datetime.fromisoformat(ddl.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                parsed = (
+                    parsed.astimezone(self._tz) if self._tz else parsed.astimezone()
+                )
+            return parsed.replace(tzinfo=None)
         except Exception:
             return datetime.max
 
-    async def get_pending_transactions(self, use_cache: bool = True) -> list[dict]:
-        """获取所有未完成任务（带 5 分钟缓存）"""
+    async def get_pending_transactions(
+        self, use_cache: bool = True
+    ) -> list[dict] | None:
+        """获取所有未完成任务（带 5 分钟缓存）。
+
+        任一数据库查询失败时返回 None（不缓存），由调用方区分「失败」与「为空」。
+        """
         if (
             use_cache
-            and self._pending_cache["data"]
+            and self._pending_cache["data"] is not None
             and (time.time() - self._pending_cache["timestamp"])
             < self._pending_cache["ttl"]
         ):
@@ -124,7 +139,11 @@ class NotionClient:
 
         results: list[dict] = []
         for db_name, db_id in self._db_ids.items():
-            results.extend(await self._query_db(db_id, db_name))
+            rows = await self._query_db(db_id, db_name)
+            if rows is None:
+                self._warn(f"[Notion] 数据库「{db_name}」查询失败，本轮不展示待办")
+                return None
+            results.extend(rows)
 
         results.sort(
             key=lambda x: (
@@ -137,7 +156,7 @@ class NotionClient:
         self._pending_cache = {"data": results, "timestamp": time.time(), "ttl": 300}
         return results
 
-    async def _query_db(self, db_id: str, db_name: str) -> list[dict]:
+    async def _query_db(self, db_id: str, db_name: str) -> list[dict] | None:
         results: list[dict] = []
         cursor = None
         while True:
@@ -146,7 +165,8 @@ class NotionClient:
                 body["start_cursor"] = cursor
             resp = await self._request("POST", f"databases/{db_id}/query", body)
             if "error" in resp:
-                break
+                self._warn(f"[Notion] 数据库「{db_name}」查询失败: {resp['error']}")
+                return None
             for page in resp.get("results", []):
                 props = page.get("properties", {})
                 status = props.get("进度", {}).get("status", {}).get("name", "未开始")

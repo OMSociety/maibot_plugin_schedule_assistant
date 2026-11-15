@@ -68,6 +68,11 @@ PURE_TECH = {
     "Apple ID",
     "caldav.icloud.com",
     "{username} {date} {weekday} {weather_current} {agenda}…",
+    "Asia/Shanghai",
+    "{date} {weekday} {weather_current} {agenda}…",
+    "{current_time} {default_time}",
+    "{current_time}",
+    "{item_title} {time_label} {ahead_label} …",
 }
 # 豁免：中日同形词且日语本身合法（最小=さいしょう）
 WHITELIST_EQ = {"最小 2"}

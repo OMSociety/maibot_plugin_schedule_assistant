@@ -10,6 +10,52 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-11-16
+
+### 新增
+
+- 全托管推送：早安、洗澡、睡觉、喝水与日程提醒统一交给 Maisaka 的 `proactive.trigger` 处理，插件不再直接发送消息，也不再补发。
+- 基础设置新增 `timezone`（IANA 时区名，默认 `Asia/Shanghai`），调度、日程时间解释与 Apple 日历读写统一使用该时区；Apple 写入的 `TZID` 跟随配置，不再硬编码。
+- 五份 intent 模板：`prompt_morning`、`prompt_bath`、`prompt_sleep`、`prompt_water`、`prompt_schedule`；非空模板整段接管，插件不再追加约束。
+- Notion 待办三态：未配置不出现待办行，读取失败显示「获取失败」，成功但为空显示「暂无」。
+- 日程目标用户只来自 `user_ids`，配置格式为 `platform:裸ID`。
+
+### 变更
+
+- 早安播报改为装配数据后交给 Maisaka 开口，不再由插件调用 LLM 直发；移除称呼与「昨夜入睡」数据。
+- 推送统一为纯文本，移除 Markdown 渲染与 `qq_markdown` 降级路径。
+- 日程提醒触发成功即写防重标记，不再依赖补发结果。
+- 时间解析修正：「晚上12点」解释为次日 00:00，「中午12点」保持 12:00。
+- 插件清单基线升级：宿主 `1.4.5–1.4.99`、SDK `2.23.0–2.23.99`；capabilities 收敛为 `chat.get_stream_by_user_id`、`maisaka.proactive.trigger`、`config.get`。
+
+### 移除
+
+- 移除 `enable_schedule_reminder_fallback` 与插件直发补发链路。
+- 移除 `message_render.markdown_enabled`、`persona_hint`、`user_nickname` 配置。
+- 移除 habits / water_last 存储键、`_users` 已知用户兜底、`temp_override` / `recur` / `snoozed_until` 字段与清理任务。
+
+### Added
+
+- Fully delegated delivery: morning briefing, bath, sleep, water and schedule reminders are all handed to Maisaka through `proactive.trigger`; the plugin no longer sends messages directly or re-sends them.
+- New `timezone` setting (IANA name, default `Asia/Shanghai`) shared by scheduling, schedule-time interpretation and Apple CalDAV reads/writes; the Apple `TZID` now follows the configured zone instead of the hard-coded value.
+- Five intent templates: `prompt_morning`, `prompt_bath`, `prompt_sleep`, `prompt_water`, `prompt_schedule`; a non-empty template takes over completely with no plugin-appended constraints.
+- Notion todos now distinguish three states: not configured (no todo line), read failure (`获取失败`), and empty (`暂无`).
+- Target users come only from `user_ids`, each entry in `platform:bare-id` form.
+
+### Changed
+
+- The morning briefing assembles data and hands it to Maisaka instead of calling an LLM and sending the result itself; the greeting name and late-night data are gone.
+- All pushes are plain text; Markdown rendering and the `qq_markdown` fallback path were removed.
+- A schedule reminder marks the item as triggered once the proactive request is accepted, independent of any fallback result.
+- Time parsing fix: `晚上12点` now means the next day at 00:00, while `中午12点` stays at 12:00.
+- Manifest baseline raised to host `1.4.5–1.4.99` and SDK `2.23.0–2.23.99`; capabilities reduced to `chat.get_stream_by_user_id`, `maisaka.proactive.trigger`, `config.get`.
+
+### Removed
+
+- Removed `enable_schedule_reminder_fallback` and the plugin-side direct-send fallback path.
+- Removed the `message_render.markdown_enabled`, `persona_hint` and `user_nickname` settings.
+- Removed the habits / water_last storage keys, the `_users` known-user fallback, the `temp_override` / `recur` / `snoozed_until` fields, and the expired-override cleanup job.
+
 ## [1.3.0] - 2026-11-04
 
 ### 新增

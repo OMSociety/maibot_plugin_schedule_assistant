@@ -19,18 +19,16 @@
 """
 
 import asyncio
-import logging
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, ClassVar
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from maibot_sdk import Field, MaiBotPlugin, PluginConfigBase, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+from . import prompts, targets
 from .apple_calendar import AppleCalendar
-from .async_utils import try_lock
 from .constants import (
     DEFAULT_BATH_TIME,
     DEFAULT_SLEEP_TIME,
@@ -38,24 +36,15 @@ from .constants import (
     DEFAULT_WATER_INTERVAL,
     DEFAULT_WATER_START,
     LOG_PREFIX,
-    SCHEDULES_KEY,
 )
 from .engine import TimedMessageEngine
-from .messaging import MessagingService, extract_stream_id, parse_user_target
 from .notion_client import NotionClient
-from .reminders.briefing import BriefingReminder
+from .reminders.morning import MorningBriefing
 from .reminders.schedule import (
-    FALLBACK_DELAY_MINUTES,
-    FALLBACK_GRACE_MINUTES,
-    build_fallback_text,
-    build_schedule_reminder_intent,
     collect_due_schedule_items,
-    mark_schedule_items_triggered,
-    parse_item_time,
+    mark_items_triggered,
 )
-from .schedule_store import ScheduleItem, ScheduleStore
-from .services.llm import LLMService
-from .services.notion import NotionService
+from .schedule_store import ScheduleStore
 from .services.weather import WeatherService
 from .tools.schedule_tools import (
     create_schedule,
@@ -63,8 +52,6 @@ from .tools.schedule_tools import (
     list_schedules,
     update_schedule,
 )
-
-logger = logging.getLogger(__name__)
 
 
 # ============ 配置模型 ============
@@ -79,44 +66,25 @@ class BasicSettingsConfig(PluginConfigBase):
         "ja-JP": {"title": "基本設定", "description": "基本設定"},
     }
 
-    persona_hint: str = Field(
-        default="",
-        description="可选语气补充（如：播报时叫用户小名）。人格本体由 MaiBot 全局配置提供",
+    timezone: str = Field(
+        default="Asia/Shanghai",
+        description="IANA 时区（如 Asia/Shanghai），调度与 Apple 日历读写都按它",
         json_schema_extra={
-            "label": "人格补充",
-            "hint": "可选语气补充，如播报时叫用户小名；人格本体由全局配置提供",
-            "placeholder": "例如：叫用户「主人」",
+            "label": "时区",
+            "hint": "IANA 时区名，如 Asia/Shanghai；非法值回退 Asia/Shanghai",
+            "placeholder": "Asia/Shanghai",
             "i18n": {
                 "en-US": {
-                    "label": "Persona Supplement",
-                    "hint": "Optional tone supplement, e.g. calling the user by a "
-                    "nickname in broadcasts; the persona itself comes from the "
-                    "global config",
-                    "placeholder": 'e.g. call the user "Master"',
+                    "label": "Time Zone",
+                    "hint": "IANA time zone name, e.g. Asia/Shanghai; "
+                    "invalid values fall back to Asia/Shanghai",
+                    "placeholder": "Asia/Shanghai",
                 },
                 "ja-JP": {
-                    "label": "ペルソナ補足",
-                    "hint": "任意の口調補足です。配信時にユーザーの愛称で呼ぶなどの"
-                    "指定が可能。ペルソナ本体はグローバル設定で提供されます",
-                    "placeholder": "例：ユーザーを「ご主人様」と呼ぶ",
-                },
-            },
-        },
-    )
-    user_nickname: str = Field(
-        default="",
-        description="用户昵称（播报称呼，留空用「主人」）",
-        json_schema_extra={
-            "label": "用户昵称",
-            "hint": "播报称呼，留空用「主人」",
-            "i18n": {
-                "en-US": {
-                    "label": "User Nickname",
-                    "hint": 'Address used in broadcasts; leave empty to use "Master"',
-                },
-                "ja-JP": {
-                    "label": "ユーザーのニックネーム",
-                    "hint": "配信時の呼び方。空欄の場合は「ご主人様」を使用",
+                    "label": "タイムゾーン",
+                    "hint": "IANA のタイムゾーン名（例: Asia/Shanghai）。"
+                    "無効な値は Asia/Shanghai に戻ります",
+                    "placeholder": "Asia/Shanghai",
                 },
             },
         },
@@ -208,26 +176,6 @@ class ScheduleReminderSettingsConfig(PluginConfigBase):
                 "ja-JP": {
                     "label": "スキャン間隔（分）",
                     "hint": "最小 2、事前リマインド分数以下を推奨",
-                },
-            },
-        },
-    )
-    enable_schedule_reminder_fallback: bool = Field(
-        default=False,
-        description="麦麦没有开口时，到点由插件直接补发一条纯文本提醒（保证送达）",
-        json_schema_extra={
-            "label": "麦麦没开口时补发",
-            "hint": "开启后只有确认送达才写防重标记；关闭时只请求麦麦开口，不保证送达",
-            "i18n": {
-                "en-US": {
-                    "label": "Fallback Delivery When Maisaka Stays Silent",
-                    "hint": "When on, the de-duplication mark is written only after delivery "
-                    "is confirmed; when off, only Maisaka is asked to speak",
-                },
-                "ja-JP": {
-                    "label": "Maisaka が話さない場合の補完送信",
-                    "hint": "オンにすると配信確認後にのみ重複防止マークを書き込みます。"
-                    "オフでは Maisaka への依頼だけになり、届く保証はありません",
                 },
             },
         },
@@ -664,71 +612,128 @@ class ExternalServicesSettingsConfig(PluginConfigBase):
     )
 
 
-class MessageRenderSettingsConfig(PluginConfigBase):
-    """消息渲染"""
-
-    __ui_label__ = "消息渲染"
-    __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
-        "en-US": {"title": "Message Rendering", "description": "Message rendering"},
-        "ja-JP": {
-            "title": "メッセージのレンダリング",
-            "description": "メッセージのレンダリング",
-        },
-    }
-
-    markdown_enabled: bool = Field(
-        default=True,
-        description="提醒/播报启用 Markdown 渲染（QQ 官方适配器通过 qq_markdown 结构化消息发送）",
-        json_schema_extra={
-            "label": "Markdown 渲染",
-            "hint": "QQ 官方适配器经 qq_markdown 结构化发送",
-            "i18n": {
-                "en-US": {
-                    "label": "Markdown Rendering",
-                    "hint": "Sent as structured qq_markdown messages via the "
-                    "official QQ adapter",
-                },
-                "ja-JP": {
-                    "label": "Markdown レンダリング",
-                    "hint": "公式 QQ アダプター経由で qq_markdown の構造化メッセージとして送信",
-                },
-            },
-        },
-    )
-
-
 class PromptSettingsConfig(PluginConfigBase):
-    """早安播报的 LLM 提示词模板"""
+    """定时推送的 intent 模板"""
 
-    __ui_label__ = "早安播报模板"
+    __ui_label__ = "定时推送模板"
     __ui_i18n__: ClassVar[dict[str, dict[str, str]]] = {
         "en-US": {
-            "title": "Morning Briefing Template",
-            "description": "LLM prompt templates for the morning briefing",
+            "title": "Push Message Templates",
+            "description": "Intent templates for scheduled pushes",
         },
         "ja-JP": {
-            "title": "おはよう配信テンプレート",
-            "description": "おはよう配信用の LLM プロンプトテンプレート",
+            "title": "定期配信テンプレート",
+            "description": "定期配信の intent テンプレート",
         },
     }
 
     prompt_morning: str = Field(
         default="",
-        description="早安播报模板。留空则使用内置默认模板；占位符：{username} {date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos} {late_night}",
+        description="早安播报模板；留空用内置模板，非空时整段接管",
         json_schema_extra={
             "label": "早安播报模板",
-            "hint": "留空用内置默认模板",
-            "placeholder": "{username} {date} {weekday} {weather_current} {agenda}…",
+            "hint": "留空用内置模板；非空时整段接管，插件不再追加约束",
+            "placeholder": "{date} {weekday} {weather_current} {agenda}…",
             "i18n": {
                 "en-US": {
-                    "label": "Morning Briefing Template",
-                    "hint": "Leave empty to use the built-in default template",
-                    "placeholder": "{username} {date} {weekday} {weather_current} {agenda}…",
+                    "label": "Morning Template",
+                    "hint": "Leave empty to use the built-in template; a non-empty "
+                    "template replaces it entirely with no extra constraints",
+                    "placeholder": "{date} {weekday} {weather_current} {agenda}…",
                 },
                 "ja-JP": {
                     "label": "おはよう配信テンプレート",
-                    "hint": "空欄の場合は内蔵のデフォルトテンプレートを使用",
-                    "placeholder": "{username} {date} {weekday} {weather_current} {agenda}…",
+                    "hint": "空欄なら内蔵テンプレート。入力すると全文を置き換え、"
+                    "追加の制約は付きません",
+                    "placeholder": "{date} {weekday} {weather_current} {agenda}…",
+                },
+            },
+        },
+    )
+    prompt_bath: str = Field(
+        default="",
+        description="洗澡提醒模板；留空用内置模板，非空时整段接管",
+        json_schema_extra={
+            "label": "洗澡提醒模板",
+            "hint": "留空用内置模板；非空时整段接管",
+            "placeholder": "{current_time} {default_time}",
+            "i18n": {
+                "en-US": {
+                    "label": "Bath Template",
+                    "hint": "Leave empty to use the built-in template; a non-empty "
+                    "template replaces it entirely",
+                    "placeholder": "{current_time} {default_time}",
+                },
+                "ja-JP": {
+                    "label": "お風呂リマインダーテンプレート",
+                    "hint": "空欄なら内蔵テンプレート。入力すると全文を置き換えます",
+                    "placeholder": "{current_time} {default_time}",
+                },
+            },
+        },
+    )
+    prompt_sleep: str = Field(
+        default="",
+        description="睡觉提醒模板；留空用内置模板，非空时整段接管",
+        json_schema_extra={
+            "label": "睡觉提醒模板",
+            "hint": "留空用内置模板；非空时整段接管",
+            "placeholder": "{current_time} {default_time}",
+            "i18n": {
+                "en-US": {
+                    "label": "Sleep Template",
+                    "hint": "Leave empty to use the built-in template; a non-empty "
+                    "template replaces it entirely",
+                    "placeholder": "{current_time} {default_time}",
+                },
+                "ja-JP": {
+                    "label": "就寝リマインダーテンプレート",
+                    "hint": "空欄なら内蔵テンプレート。入力すると全文を置き換えます",
+                    "placeholder": "{current_time} {default_time}",
+                },
+            },
+        },
+    )
+    prompt_water: str = Field(
+        default="",
+        description="喝水提醒模板；留空用内置模板，非空时整段接管",
+        json_schema_extra={
+            "label": "喝水提醒模板",
+            "hint": "留空用内置模板；非空时整段接管",
+            "placeholder": "{current_time}",
+            "i18n": {
+                "en-US": {
+                    "label": "Water Template",
+                    "hint": "Leave empty to use the built-in template; a non-empty "
+                    "template replaces it entirely",
+                    "placeholder": "{current_time}",
+                },
+                "ja-JP": {
+                    "label": "水分補給リマインダーテンプレート",
+                    "hint": "空欄なら内蔵テンプレート。入力すると全文を置き換えます",
+                    "placeholder": "{current_time}",
+                },
+            },
+        },
+    )
+    prompt_schedule: str = Field(
+        default="",
+        description="日程提醒模板；留空用内置模板，非空时整段接管",
+        json_schema_extra={
+            "label": "日程提醒模板",
+            "hint": "留空用内置模板；非空时整段接管",
+            "placeholder": "{item_title} {time_label} {ahead_label} …",
+            "i18n": {
+                "en-US": {
+                    "label": "Schedule Template",
+                    "hint": "Leave empty to use the built-in template; a non-empty "
+                    "template replaces it entirely",
+                    "placeholder": "{item_title} {time_label} {ahead_label} …",
+                },
+                "ja-JP": {
+                    "label": "スケジュールリマインダーテンプレート",
+                    "hint": "空欄なら内蔵テンプレート。入力すると全文を置き換えます",
+                    "placeholder": "{item_title} {time_label} {ahead_label} …",
                 },
             },
         },
@@ -745,7 +750,7 @@ class PluginBaseConfig(PluginConfigBase):
     }
 
     config_version: str = Field(
-        default="1.1.0",
+        default="2.0.0",
         description="配置版本号",
         json_schema_extra={
             "label": "配置版本",
@@ -804,9 +809,6 @@ class ScheduleAssistantConfig(PluginConfigBase):
     external_services: ExternalServicesSettingsConfig = Field(
         default_factory=ExternalServicesSettingsConfig, description="外部服务"
     )
-    message_render: MessageRenderSettingsConfig = Field(
-        default_factory=MessageRenderSettingsConfig, description="消息渲染"
-    )
     prompt_settings: PromptSettingsConfig = Field(
         default_factory=PromptSettingsConfig, description="早安播报模板"
     )
@@ -861,101 +863,43 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         self.store = ScheduleStore()
         self.scheduler: AsyncIOScheduler | None = None
         self.timed_engine: TimedMessageEngine | None = None
-        self.messaging: MessagingService | None = None
-        self.llm_service: LLMService | None = None
         self.weather_service: WeatherService | None = None
-        self.notion_service: NotionService | None = None
+        self.notion_client: NotionClient | None = None
         self.apple_calendar: AppleCalendar | None = None
-        self.briefing_reminder: BriefingReminder | None = None
+        self.morning: MorningBriefing | None = None
+        self._timezone: ZoneInfo = ZoneInfo("Asia/Shanghai")
         self._services_ready = False
-        self._services_init_lock = asyncio.Lock()
+        self._services_lock = asyncio.Lock()
         self._tasks_registered = False
-        self._schedule_reminder_scan_lock = asyncio.Lock()
-        self._apple_calendar_sync_lock = asyncio.Lock()
-        # 上一轮 Apple 读取不完整的原因：同一原因只提示一次，恢复后复位
-        self._last_apple_read_issue: str | None = None
-        self._morning_ctx_cache: dict | None = None
-        self._morning_ctx_ts = 0.0
-        # 日程提醒的补发账本：key=user:item → 请求麦麦开口的时刻（进程内，不落盘）
-        self._reminder_pending: dict[str, datetime] = {}
+        self._scan_lock = asyncio.Lock()
+        self._apple_lock = asyncio.Lock()
+        self._last_apple_issue: str | None = None
 
-    # ── 配置访问辅助（展平嵌套到 dict，兼容既有业务代码）──
+    def _targets(self) -> list[str]:
+        return [
+            str(item).strip()
+            for item in (self.config.basic.user_ids or [])
+            if str(item).strip()
+        ]
 
-    def _flat_config(self) -> dict:
-        """把嵌套 config 展平为 dict（basic.user_ids → user_ids 等）"""
-        cfg = {}
-        c = self.config
-        cfg["persona_hint"] = c.basic.persona_hint
-        cfg["user_nickname"] = c.basic.user_nickname
-        cfg["user_ids"] = c.basic.user_ids or []
-        cfg["enable_schedule_reminder"] = c.schedule_reminder.enable_schedule_reminder
-        cfg["schedule_reminder_minutes"] = c.schedule_reminder.schedule_reminder_minutes
-        cfg["schedule_reminder_check_interval"] = (
-            c.schedule_reminder.schedule_reminder_check_interval
-        )
-        cfg["enable_schedule_reminder_fallback"] = (
-            c.schedule_reminder.enable_schedule_reminder_fallback
-        )
-        cfg["enable_morning_report"] = c.habit_reminder.enable_morning_report
-        cfg["morning_report_time"] = c.habit_reminder.morning_report_time
-        cfg["enable_bath_reminder"] = c.habit_reminder.enable_bath_reminder
-        cfg["bath_time"] = c.habit_reminder.bath_time
-        cfg["enable_sleep_reminder"] = c.habit_reminder.enable_sleep_reminder
-        cfg["sleep_time"] = c.habit_reminder.sleep_time
-        cfg["enable_water_reminder"] = c.habit_reminder.enable_water_reminder
-        cfg["water_interval"] = c.habit_reminder.water_interval
-        cfg["water_start_time"] = c.habit_reminder.water_start_time
-        cfg["water_end_time"] = c.habit_reminder.water_end_time
-        cfg["enable_apple_calendar_sync"] = c.calendar_sync.enable_apple_calendar_sync
-        cfg["apple_calendar_sync_interval"] = (
-            c.calendar_sync.apple_calendar_sync_interval
-        )
-        cfg["apple_calendar"] = {
-            "username": c.calendar_sync.apple_username,
-            "app_password": c.calendar_sync.apple_app_password,
-            "calendar_id": c.calendar_sync.apple_calendar_id,
-            "caldav_host": c.calendar_sync.apple_caldav_host,
-        }
-        cfg["webcal_urls"] = c.calendar_sync.webcal_urls or []
-        cfg["maton_api_key"] = c.external_services.maton_api_key
-        cfg["notion_db_ids"] = c.external_services.notion_db_ids or []
-        cfg["weather_api_key"] = c.external_services.weather_api_key
-        cfg["weather_city"] = c.external_services.weather_city
-        cfg["markdown_enabled"] = c.message_render.markdown_enabled
-        cfg["prompt_morning"] = c.prompt_settings.prompt_morning or ""
-        return cfg
-
-    # ── 生命周期 ────────────────────────────────────────
+    def _resolve_timezone(self) -> ZoneInfo:
+        name = str(self.config.basic.timezone or "").strip() or "Asia/Shanghai"
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            self.ctx.logger.warning(
+                f"{LOG_PREFIX} 时区 {name!r} 无法识别，回退 Asia/Shanghai"
+            )
+            return ZoneInfo("Asia/Shanghai")
 
     async def on_load(self) -> None:
-        # 存储：注入数据目录（JSON 文件）
         self.store.set_data_dir(str(self.ctx.paths.data_dir))
-
-        # 消息服务与 LLM 服务
-        conf = self._flat_config()
-        default_user_id = None
-        if conf.get("user_ids"):
-            default_user_id = str(conf["user_ids"][0])
-        self.messaging = MessagingService(
-            self,
-            conf,
-            users_lookup=self.store.get_all_users,
-            default_user_id=default_user_id,
-        )
-        self.llm_service = LLMService(self, conf)
-
-        # 定时调度器
-        self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
-        self.timed_engine = TimedMessageEngine(
-            self, conf, self.messaging, self.scheduler
-        )
-
-        # 初始化外部服务与提醒组件
+        self.store.logger = self.ctx.logger
+        self._timezone = self._resolve_timezone()
+        self.scheduler = AsyncIOScheduler(timezone=self._timezone)
+        self.timed_engine = TimedMessageEngine(self.scheduler, self.ctx.logger)
         await self._ensure_services()
-
-        # 注册定时任务
         await self._register_tasks()
-
         self.ctx.logger.info(f"{LOG_PREFIX} 插件加载完成")
 
     async def on_unload(self) -> None:
@@ -971,710 +915,297 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
     async def on_config_update(
         self, scope: str, config_data: dict[str, Any], version: str
     ) -> None:
-        if scope != "self":
-            return
-        # 每轮 tick 重新 _flat_config() 的开关/阈值类配置即刻生效；
-        # 调度时间/开关与各服务持有的 conf 快照需重载插件（重启调度）才生效
-        self.ctx.logger.info(f"{LOG_PREFIX} 配置已更新（调度时间类改动需重载插件生效）")
+        if scope == "self":
+            self.ctx.logger.info(
+                f"{LOG_PREFIX} 配置已更新（时间/开关类改动需重载插件生效）"
+            )
 
     # ── 服务初始化 ──────────────────────────────────────
 
     async def _ensure_services(self) -> None:
         if self._services_ready:
             return
-        async with self._services_init_lock:
+        async with self._services_lock:
             if self._services_ready:
                 return
-            conf = self._flat_config()
-
-            api_key = conf.get("weather_api_key")
-            city = conf.get("weather_city", "北京")
-            if api_key:
+            conf = self.config
+            if conf.external_services.weather_api_key:
                 self.weather_service = WeatherService(
-                    {"weather_api_key": api_key, "weather_city": city}
+                    {
+                        "weather_api_key": conf.external_services.weather_api_key,
+                        "weather_city": conf.external_services.weather_city,
+                    }
                 )
 
-            notion_db_ids = conf.get("notion_db_ids", [])
-            maton_key = conf.get("maton_api_key")
-            if notion_db_ids and maton_key:
-                try:
-                    transaction_db = ""
-                    reading_db = ""
-                    for item in notion_db_ids:
-                        if isinstance(item, dict):
-                            name = item.get("name", "")
-                            db_id = item.get("id", "")
-                            if name in ("事务", "transaction"):
-                                transaction_db = db_id
-                            elif name in ("阅读", "reading"):
-                                reading_db = db_id
-                        elif isinstance(item, str):
-                            raw = item.strip()
-                            if ":" in raw:
-                                name, db_id = raw.split(":", 1)
-                                if name.strip().lower() in ("事务", "transaction"):
-                                    transaction_db = db_id.strip()
-                                elif name.strip().lower() in ("阅读", "reading"):
-                                    reading_db = db_id.strip()
-                            elif not transaction_db:
-                                transaction_db = raw
-                            elif not reading_db:
-                                reading_db = raw
-                    self._notion = NotionClient(maton_key, transaction_db, reading_db)
-                    self.notion_service = NotionService(self._notion)
-                except Exception as e:
-                    self.ctx.logger.warning(f"{LOG_PREFIX} Notion 初始化失败: {e}")
-                    self.notion_service = None
+            notion_ids = conf.external_services.notion_db_ids or []
+            maton_key = conf.external_services.maton_api_key
+            if notion_ids and maton_key:
+                transaction_db = reading_db = ""
+                for item in notion_ids:
+                    if isinstance(item, dict):
+                        name = str(item.get("name", "")).strip().lower()
+                        db_id = str(item.get("id", "")).strip()
+                    elif isinstance(item, str):
+                        raw = item.strip()
+                        if ":" in raw:
+                            name, db_id = (part.strip() for part in raw.split(":", 1))
+                            name, db_id = name.lower(), db_id
+                        else:
+                            name, db_id = "", raw
+                    else:
+                        continue
+                    if name in ("事务", "transaction"):
+                        transaction_db = db_id
+                    elif name in ("阅读", "reading"):
+                        reading_db = db_id
+                    elif not transaction_db:
+                        transaction_db = db_id
+                    elif not reading_db:
+                        reading_db = db_id
+                self.notion_client = NotionClient(
+                    maton_key,
+                    transaction_db,
+                    reading_db,
+                    logger=self.ctx.logger,
+                    timezone=self._timezone,
+                )
 
-            self.briefing_reminder = BriefingReminder(conf, self, self.llm_service)
-
-            if conf.get("enable_apple_calendar_sync"):
-                apple_conf = conf.get("apple_calendar", {})
-                username = apple_conf.get("username") if apple_conf else None
-                app_password = apple_conf.get("app_password") if apple_conf else None
-                if username and app_password:
+            if conf.calendar_sync.enable_apple_calendar_sync:
+                if (
+                    conf.calendar_sync.apple_username
+                    and conf.calendar_sync.apple_app_password
+                ):
                     self.apple_calendar = AppleCalendar(
-                        username=username,
-                        app_password=app_password,
-                        calendar_id=(apple_conf.get("calendar_id") or "").strip()
+                        username=conf.calendar_sync.apple_username,
+                        app_password=conf.calendar_sync.apple_app_password,
+                        calendar_id=conf.calendar_sync.apple_calendar_id.strip()
                         or None,
-                        webcal_urls=conf.get("webcal_urls", []) or [],
-                        caldav_host=(apple_conf.get("caldav_host") or "").strip()
+                        webcal_urls=list(conf.calendar_sync.webcal_urls or []),
+                        caldav_host=conf.calendar_sync.apple_caldav_host.strip()
                         or None,
+                        timezone=self._timezone,
+                    )
+                else:
+                    self.ctx.logger.warning(
+                        f"{LOG_PREFIX} 已开启 Apple 同步但缺少账号或 App 专用密码"
                     )
 
+            self.morning = MorningBriefing(
+                self.store,
+                self.weather_service,
+                self.notion_client,
+                self.apple_calendar,
+                self._timezone,
+            )
             self._services_ready = True
             self.ctx.logger.info(f"{LOG_PREFIX} 外部服务初始化完成")
 
     # ── 定时任务注册 ────────────────────────────────────
 
     async def _register_tasks(self) -> None:
-        if self._tasks_registered:
+        if self._tasks_registered or not self.timed_engine:
             return
         self._tasks_registered = True
-        conf = self._flat_config()
-        engine = self.timed_engine
+        conf = self.config
+        habit = conf.habit_reminder
 
-        # 早安播报（固定格式直发）
-        if conf.get("enable_morning_report", True):
-            morning_time = conf.get("morning_report_time", "09:00")
-            engine.register_job(
-                "morning_briefing",
-                morning_time,
-                self._morning_briefing_content,
-                prepare=self._prepare_morning_context,
+        if habit.enable_morning_report:
+            self.timed_engine.register(
+                "morning_briefing", habit.morning_report_time, self._on_morning
             )
-
-        # 洗澡/睡觉/喝水（Maisaka 自己开口）
-        if conf.get("enable_bath_reminder", True):
-            engine.register_job(
-                "bath_reminder",
-                conf.get("bath_time", DEFAULT_BATH_TIME),
-                self._maisaka_habit_provider("bath"),
+        if habit.enable_bath_reminder:
+            self.timed_engine.register("bath_reminder", habit.bath_time, self._on_bath)
+        if habit.enable_sleep_reminder:
+            self.timed_engine.register(
+                "sleep_reminder", habit.sleep_time, self._on_sleep
             )
-        if conf.get("enable_sleep_reminder", True):
-            engine.register_job(
-                "sleep_reminder",
-                conf.get("sleep_time", DEFAULT_SLEEP_TIME),
-                self._maisaka_habit_provider("sleep"),
-            )
-        if conf.get("enable_water_reminder", True):
-            water_interval = conf.get("water_interval", DEFAULT_WATER_INTERVAL)
-            engine.register_raw_job(
+        if habit.enable_water_reminder:
+            self.timed_engine.register(
                 "water_reminder",
-                ("interval", {"minutes": max(1, int(water_interval))}),
-                self._water_reminder_tick,
+                ("interval", {"minutes": max(1, int(habit.water_interval))}),
+                self._water_tick,
                 max_instances=1,
                 coalesce=True,
             )
 
-        # 日程提醒扫描（Maisaka 注入回复生命周期）
-        if conf.get("enable_schedule_reminder"):
-            check_interval = max(
-                2, int(conf.get("schedule_reminder_check_interval", 5) or 5)
+        if conf.schedule_reminder.enable_schedule_reminder:
+            interval = max(
+                2, int(conf.schedule_reminder.schedule_reminder_check_interval or 5)
             )
-            engine.register_raw_job(
+            self.timed_engine.register(
                 "schedule_reminder_scan",
-                ("interval", {"minutes": check_interval}),
-                self._schedule_reminder_scan,
+                ("interval", {"minutes": interval}),
+                self._schedule_scan,
                 max_instances=1,
                 coalesce=True,
-                misfire_grace_time=check_interval * 60,
+                misfire_grace_time=interval * 60,
             )
 
-        # Apple 日历同步
-        if conf.get("enable_apple_calendar_sync"):
-            sync_interval = conf.get("apple_calendar_sync_interval", 30)
-            engine.register_raw_job(
+        if conf.calendar_sync.enable_apple_calendar_sync and self.apple_calendar:
+            interval = max(
+                5, int(conf.calendar_sync.apple_calendar_sync_interval or 30)
+            )
+            self.timed_engine.register(
                 "apple_calendar_sync",
-                ("interval", {"minutes": sync_interval}),
-                self._apple_calendar_sync,
+                ("interval", {"minutes": interval}),
+                self._apple_sync,
                 max_instances=1,
                 coalesce=True,
                 misfire_grace_time=120,
             )
 
-        # 清理过期临时覆盖
-        engine.register_raw_job(
-            "clear_expired_overrides",
-            CronTrigger(hour=0, minute=5),
-            self._clear_expired_overrides,
+        self.timed_engine.start()
+
+    # ── 推送：全部交给 Maisaka ──────────────────────────
+
+    async def _push(self, target: str, intent: str, reason: str, kind: str) -> bool:
+        return await targets.trigger_proactive(
+            self.ctx,
+            target,
+            intent,
+            reason,
+            logger=self.ctx.logger,
+            metadata={"source": "schedule_assistant", "kind": kind},
         )
 
-        engine.start()
-
-    # ── 早安播报（固定格式直发）────────────────────────
-
-    async def _prepare_morning_context(self) -> dict:
-        now = time.monotonic()
-        if self._morning_ctx_cache and now - self._morning_ctx_ts < 300:
-            return self._morning_ctx_cache
+    async def _on_morning(self) -> None:
         await self._ensure_services()
-        weather_current, weather_forecast = "", ""
-        if self.weather_service:
+        if not self.morning:
+            return
+        custom = self.config.prompt_settings.prompt_morning
+        for target in self._targets():
+            _, bare = targets.parse_user_target(target)
+            if not bare:
+                continue
             try:
-                weather_current, weather_forecast = await self.weather_service.fetch()
-            except Exception:
-                weather_current, weather_forecast = "", ""
-        late_night_text = ""
-        if self.apple_calendar:
-            try:
-                late_night = await self.apple_calendar.get_late_night_events()
-                late_night_text = "、".join(
-                    [e.get("summary", "无标题") for e in late_night[:3]]
+                data = await self.morning.build(bare)
+            except Exception as exc:
+                self.ctx.logger.warning(
+                    f"{LOG_PREFIX} 早安数据构建失败 target={target}: {exc}"
                 )
-            except Exception:
-                late_night_text = ""
-        self._morning_ctx_cache = {
-            "weather_current": weather_current,
-            "weather_forecast": weather_forecast,
-            "late_night": late_night_text,
+                continue
+            intent = prompts.render("morning", data, custom)
+            await self._push(target, intent, "morning_briefing", "morning")
+
+    async def _on_bath(self) -> None:
+        await self._on_habit(
+            "bath", self.config.habit_reminder.bath_time, "bath_reminder"
+        )
+
+    async def _on_sleep(self) -> None:
+        await self._on_habit(
+            "sleep", self.config.habit_reminder.sleep_time, "sleep_reminder"
+        )
+
+    async def _on_habit(self, kind: str, default_time: str, reason: str) -> None:
+        now = datetime.now(self._timezone)
+        data = {
+            "current_time": now.strftime("%H:%M"),
+            "default_time": default_time,
         }
-        self._morning_ctx_ts = now
-        return self._morning_ctx_cache
+        custom = getattr(self.config.prompt_settings, f"prompt_{kind}", "")
+        intent = prompts.render(kind, data, custom)
+        for target in self._targets():
+            await self._push(target, intent, reason, kind)
 
-    async def _morning_briefing_content(
-        self, user_id: str, shared: dict | None = None
-    ) -> str | None:
-        """早安播报内容生成（只生成不发送，发送由引擎走 messaging）"""
-        await self._ensure_services()
-        shared = shared or await self._prepare_morning_context()
-
-        now = datetime.now()
-        date_str = now.strftime("%Y-%m-%d")
-        weekday_str = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][
-            now.weekday()
-        ]
-        nickname = await self._get_user_nickname(user_id)
-        local_text = await self._get_today_local_schedules_text(user_id)
-        apple_text = await self._get_today_apple_calendar_text()
-        agenda_text = self._merge_today_schedule_blocks(local_text, apple_text)
-        notion_text = await self._get_notion_pending_text()
-
-        briefing = await self.briefing_reminder.generate_full_report(
-            username=nickname,
-            date=date_str,
-            weekday=weekday_str,
-            weather_current=shared.get("weather_current", ""),
-            weather_forecast=shared.get("weather_forecast", ""),
-            agenda=agenda_text,
-            notion_todos=notion_text,
-            late_night=shared.get("late_night", ""),
-            user_id=user_id,
-        )
-        return briefing or None
-
-    # ── 洗澡/睡觉/喝水：Maisaka 自己开口 ──────────────
-
-    _MAISAKA_INTENTS = {
-        "bath": "洗澡时间到了，自然地提醒用户去洗澡",
-        "sleep": "该睡觉了，温柔地提醒用户早点休息",
-        "water": "提醒用户喝口水休息一下",
-    }
-    _MAISAKA_REASONS = {
-        "bath": "bath_reminder",
-        "sleep": "sleep_reminder",
-        "water": "water_reminder",
-    }
-
-    async def _trigger_maisaka(
-        self,
-        user_id: str,
-        intent: str,
-        reason: str,
-        metadata: dict | None = None,
-    ) -> bool:
-        """请求 Maisaka 主动开口，返回宿主是否接受了这次主动聊天任务
-
-        注意 True 只代表宿主排上了一轮强制回复，不代表麦麦真的开口（说不说话由
-        模型决定）。调用方拿它当「已提醒」的证据之前，必须另有确有其发送的凭据
-        （见 _deliver_user_schedules 的补发判定）。
-        """
-        stream = await self._get_user_stream(user_id)
-        if not stream:
-            return False
-        try:
-            result = await self.ctx.maisaka.proactive.trigger(
-                stream_id=extract_stream_id(stream),
-                intent=intent,
-                reason=reason,
-                metadata=metadata or {"source": "schedule_assistant"},
-            )
-        except Exception as e:
-            self.ctx.logger.warning(
-                f"{LOG_PREFIX} Maisaka 主动触发失败 user={user_id} reason={reason}: {e}"
-            )
-            return False
-        # 宿主拒绝时不抛异常，而是返回 {"success": False, "error": ...}
-        # （如会话已不存在、intent 为空），不读返回值就会把拒绝当成功
-        if isinstance(result, dict) and result.get("success") is False:
-            self.ctx.logger.warning(
-                f"{LOG_PREFIX} Maisaka 主动触发被拒绝 user={user_id} "
-                f"reason={reason} err={result.get('error')}"
-            )
-            return False
-        return True
-
-    async def _trigger_maisaka_habit(self, habit_type: str, user_id: str) -> bool:
-        """习惯提醒（洗澡/睡觉/喝水）的 Maisaka 触发入口"""
-        return await self._trigger_maisaka(
-            user_id,
-            intent=self._MAISAKA_INTENTS.get(habit_type, "定时提醒"),
-            reason=self._MAISAKA_REASONS.get(habit_type, "habit_reminder"),
-            metadata={"source": "schedule_assistant", "habit": habit_type},
-        )
-
-    def _maisaka_habit_provider(self, habit_type: str):
-        """构造 Maisaka 主动提醒 provider（定时引擎调用，触发 Maisaka 开口）"""
-
-        async def provider(user_id: str, shared: Any = None) -> str | None:
-            """返回 None（不直发）；实际通过 Maisaka proactive 触发"""
-            await self._trigger_maisaka_habit(habit_type, user_id)
-            return None  # 不直发
-
-        return provider
-
-    async def _water_reminder_tick(self) -> None:
-        """喝水提醒 tick：仅时段内触发 Maisaka"""
-        conf = self._flat_config()
-        if not conf.get("enable_water_reminder", True):
+    async def _water_tick(self) -> None:
+        habit = self.config.habit_reminder
+        if not habit.enable_water_reminder:
             return
-        now = datetime.now()
-        start_h, start_m = map(
-            int, conf.get("water_start_time", DEFAULT_WATER_START).split(":")
-        )
-        end_h, end_m = map(
-            int, conf.get("water_end_time", DEFAULT_WATER_END).split(":")
-        )
+        now = datetime.now(self._timezone)
+        try:
+            start_h, start_m = map(int, habit.water_start_time.split(":"))
+            end_h, end_m = map(int, habit.water_end_time.split(":"))
+        except (ValueError, AttributeError):
+            start_h, start_m, end_h, end_m = 9, 30, 21, 30
         now_min = now.hour * 60 + now.minute
-        start_min = start_h * 60 + start_m
-        end_min = end_h * 60 + end_m
-        if not (start_min <= now_min <= end_min):
+        if not (start_h * 60 + start_m <= now_min <= end_h * 60 + end_m):
             return
-        await self._run_maisaka_habit("water")
+        data = {"current_time": now.strftime("%H:%M")}
+        intent = prompts.render("water", data, self.config.prompt_settings.prompt_water)
+        for target in self._targets():
+            await self._push(target, intent, "water_reminder", "water")
 
-    async def _run_maisaka_habit(self, habit_type: str) -> None:
-        """对全部目标用户触发 Maisaka 提醒"""
-        if not self.messaging:
-            return
-        for user_id in await self.messaging.resolve_target_users(
-            include_known_users=True
-        ):
-            await self._trigger_maisaka_habit(habit_type, user_id)
+    # ── 日程提醒 ────────────────────────────────────────
 
-    # ── 日程提醒扫描（Maisaka 注入回复生命周期）────────
-
-    async def _schedule_reminder_maisaka(self, user_id: str, items: list[dict]) -> bool:
-        """把到点日程注入 Maisaka 回复生命周期（同轮多事件合并为一次开口）"""
-        if not items:
-            return True
-        ok = await self._trigger_maisaka(
-            user_id,
-            intent=build_schedule_reminder_intent(items),
-            reason="schedule_reminder",
-            metadata={
-                "source": "schedule_assistant",
-                "kind": "schedule_reminder",
-                "items": [
-                    {
-                        k: it.get(k)
-                        for k in ("item_id", "title", "start", "end", "minutes_until")
-                    }
-                    for it in items
-                ],
-            },
-        )
-        if not ok:
-            self.ctx.logger.warning(
-                f"{LOG_PREFIX} 日程提醒触发失败 user={user_id} "
-                f"items={[it.get('title') for it in items]}"
-            )
-        return ok
-
-    async def _schedule_reminder_scan(self) -> None:
-        async with try_lock(self._schedule_reminder_scan_lock) as acquired:
-            if not acquired:
-                return
+    async def _schedule_scan(self) -> None:
+        async with self._scan_lock:
             await self._ensure_services()
-            if not self.messaging:
-                return
-
-            # Apple 事件先入库再扫：手机侧新加/改期的事件也能被提前提醒
-            await self._apple_calendar_sync()
-
-            conf = self._flat_config()
-            minutes_ahead = max(1, int(conf.get("schedule_reminder_minutes", 10) or 10))
-            check_interval = max(
-                2, int(conf.get("schedule_reminder_check_interval", 5) or 5)
+            await self._apple_sync()
+            now = datetime.now(self._timezone)
+            minutes = max(
+                1, int(self.config.schedule_reminder.schedule_reminder_minutes or 10)
             )
-            fallback_enabled = bool(
-                conf.get("enable_schedule_reminder_fallback", False)
-            )
-            # 宽限期让「开始后仍未送达」的事件继续留在候选集里，供补发再试；
-            # 至少留两个扫描间隔，避免刚好错过最后一轮
-            grace_minutes = (
-                max(FALLBACK_GRACE_MINUTES, 2 * check_interval)
-                if fallback_enabled
-                else 0
-            )
-
-            for user_id in await self.messaging.resolve_target_users(
-                include_known_users=True
-            ):
+            for target in self._targets():
+                _, bare = targets.parse_user_target(target)
+                if not bare:
+                    continue
                 try:
-                    await self._deliver_user_schedules(
-                        user_id, minutes_ahead, grace_minutes, fallback_enabled
+                    due = await collect_due_schedule_items(
+                        self.store, bare, minutes, now
                     )
-                except Exception as e:
+                except Exception as exc:
                     self.ctx.logger.warning(
-                        f"{LOG_PREFIX} 用户 {user_id} 日程提醒扫描失败: {e}"
+                        f"{LOG_PREFIX} 日程扫描失败 target={target}: {exc}"
                     )
-
-    async def _deliver_user_schedules(
-        self,
-        user_id: str,
-        minutes_ahead: int,
-        grace_minutes: int,
-        fallback_enabled: bool,
-    ) -> None:
-        """单个用户的一轮提醒编排：请麦麦开口一次 → 没开口就补发 → 送达才落标记
-
-        防重标记表示「这一期已经确认送达」，因此只在这两条路径上写：麦麦的外发
-        被观测到，或插件补发成功。请求麦麦开口被接受不写标记——否则一次不开口
-        就会把这条日程本期彻底吃掉。
-        """
-        now = datetime.now()
-        due = await collect_due_schedule_items(
-            self.store,
-            user_id,
-            minutes_ahead,
-            mark_triggered=False,
-            grace_minutes=grace_minutes,
-        )
-        due_keys = {self._reminder_key(user_id, it) for it in due}
-        # 已送达或已出窗的条目退出账本（出窗的条目不会再被 collect 选中）
-        for key in [
-            k
-            for k in self._reminder_pending
-            if k.startswith(f"{user_id}:") and k not in due_keys
-        ]:
-            self._reminder_pending.pop(key, None)
-
-        fresh = [
-            it
-            for it in due
-            if self._reminder_key(user_id, it) not in self._reminder_pending
-        ]
-        if fresh and await self._schedule_reminder_maisaka(user_id, fresh):
-            if fallback_enabled:
-                for it in fresh:
-                    self._reminder_pending[self._reminder_key(user_id, it)] = now
-            else:
-                # 关闭补发时沿用旧口径：请求被宿主接受即视为已提醒
-                await mark_schedule_items_triggered(self.store, user_id, fresh)
-
-        if not fallback_enabled:
-            return
-
-        waiting = [
-            it
-            for it in due
-            if self._reminder_key(user_id, it) in self._reminder_pending
-            and now - self._reminder_pending[self._reminder_key(user_id, it)]
-            >= timedelta(minutes=FALLBACK_DELAY_MINUTES)
-        ]
-        if not waiting:
-            return
-
-        if await self._reminder_spoke_since(
-            user_id,
-            min(
-                self._reminder_pending[self._reminder_key(user_id, it)]
-                for it in waiting
-            ),
-        ):
-            # 麦麦确实开口了：关窗，不再补发
-            await self._finish_reminders(user_id, waiting)
-            return
-
-        if await self._send_reminder_fallback(user_id, waiting):
-            await self._finish_reminders(user_id, waiting)
-
-    async def _finish_reminders(self, user_id: str, items: list[dict]) -> None:
-        """确认送达后收尾：落防重标记并清掉补发账本"""
-        await mark_schedule_items_triggered(self.store, user_id, items)
-        for it in items:
-            self._reminder_pending.pop(self._reminder_key(user_id, it), None)
-
-    @staticmethod
-    def _reminder_key(user_id: str, item: dict) -> str:
-        """补发账本的键：同一用户的不同日程互不干扰"""
-        return f"{user_id}:{item.get('item_id')}"
-
-    async def _reminder_spoke_since(self, user_id: str, since: datetime) -> bool:
-        """since 之后该用户的会话里是否已有麦麦发出的消息（尽力而为的开口确认）
-
-        麦麦开口走宿主自己的发送链路，插件拿不到精确回执：这里以「会话内出现了
-        一条不是用户发的消息」作近似。任何取不到证据的情况（无聊天流、能力不可
-        用、字段缺失）一律返回 False —— 宁可多补一条，也不让提醒静默丢失。
-        """
-        stream = await self._get_user_stream(user_id)
-        stream_id = extract_stream_id(stream) if stream else ""
-        if not stream_id:
-            return False
-        hours = max(1, int((datetime.now() - since).total_seconds() // 3600) + 1)
-        try:
-            messages = await self.ctx.call_capability(
-                "message.get_recent", chat_id=stream_id, limit=20, hours=hours
-            )
-        except Exception as e:
-            self.ctx.logger.debug(f"{LOG_PREFIX} 查询最近消息失败 user={user_id}: {e}")
-            return False
-
-        # 能力失败时宿主回 {"success": False, "error": ...}（无 messages 键）
-        if isinstance(messages, dict):
-            if messages.get("success") is False:
-                self.ctx.logger.debug(
-                    f"{LOG_PREFIX} 查询最近消息被拒 user={user_id}: "
-                    f"{messages.get('error') or messages}"
+                    continue
+                if not due:
+                    continue
+                custom = self.config.prompt_settings.prompt_schedule
+                intent = "\n".join(
+                    prompts.render(
+                        "schedule",
+                        {
+                            "item_title": item.get("title", ""),
+                            "time_label": item.get("time_label", ""),
+                            "ahead_label": item.get("ahead_label", ""),
+                            "item_context": item.get("context", ""),
+                        },
+                        custom,
+                    )
+                    for item in due
                 )
-            return False
-
-        _, uid = parse_user_target(user_id)
-        for msg in messages or []:
-            if not isinstance(msg, dict):
-                continue
-            ts = _message_timestamp(msg)
-            if ts is None or ts <= since:
-                continue
-            sender = _message_sender_id(msg)
-            if sender and sender != str(uid):
-                return True
-        return False
-
-    async def _send_reminder_fallback(self, user_id: str, items: list[dict]) -> bool:
-        """麦麦没开口时插件直接补发一条纯文本提醒（不经过 LLM）"""
-        if not self.messaging or not items:
-            return False
-        titles = [it.get("title") for it in items]
-        ok = await self.messaging.send_to_user(
-            user_id, build_fallback_text(items), markdown=False
-        )
-        log = self.ctx.logger.info if ok else self.ctx.logger.warning
-        log(
-            f"{LOG_PREFIX} 日程提醒{'补发成功' if ok else '补发失败'} "
-            f"user={user_id} items={titles}"
-        )
-        return ok
+                ok = await self._push(target, intent, "schedule_reminder", "schedule")
+                if ok:
+                    await mark_items_triggered(self.store, bare, due)
 
     # ── Apple 日历同步 ─────────────────────────────────
 
-    async def _apple_calendar_sync(self) -> None:
-        async with try_lock(self._apple_calendar_sync_lock) as acquired:
-            if not acquired:
+    async def _apple_sync(self) -> None:
+        async with self._apple_lock:
+            if not self.apple_calendar:
                 return
-            await self._refresh_apple_events_to_store()
-
-    async def _refresh_apple_events_to_store(self) -> None:
-        """拉取 Apple 日历事件并同步进本地库（同步任务与提醒扫描共用）。
-
-        本轮只要有一处没读全（某日历抓取失败、某个 .ics 没拉到、WebCal 读取
-        失败），就只做新增与更新、不删除本地日程——否则 Apple 侧暂时读不到
-        会被当成「那边已删除」，本地日程随之消失。
-        """
-        if not self.apple_calendar or not self.messaging:
-            return
-        try:
-            events, issues = await self.apple_calendar.get_all_events(days=7)
+            try:
+                events, issues = await self.apple_calendar.get_all_events(days=7)
+            except Exception as exc:
+                self.ctx.logger.error(f"{LOG_PREFIX} Apple 日历读取失败: {exc}")
+                return
             if not events:
                 return
             reason = "；".join(issues)
-            if reason:
-                if reason != self._last_apple_read_issue:
-                    self.ctx.logger.warning(
-                        f"{LOG_PREFIX} Apple 日历读取不完整（{reason}），"
-                        "本轮只做新增与更新，不删除本地日程"
-                    )
-                else:
-                    self.ctx.logger.debug(
-                        f"{LOG_PREFIX} Apple 日历读取仍不完整，继续不删除本地日程"
-                    )
-                self._last_apple_read_issue = reason
-            else:
-                self._last_apple_read_issue = None
-            for user_id in await self.messaging.resolve_target_users(
-                include_known_users=True
-            ):
-                stats = await self.store.sync_from_apple_calendar(
-                    user_id, events, allow_delete=not issues
+            if reason and reason != self._last_apple_issue:
+                self.ctx.logger.warning(
+                    f"{LOG_PREFIX} Apple 日历读取不完整（{reason}），本轮只做新增与更新"
                 )
-                if stats.get("added", 0) > 0:
-                    self.ctx.logger.info(
-                        f"{LOG_PREFIX} Apple→本地同步 user={user_id} "
-                        f"added={stats['added']}"
-                    )
-        except Exception as e:
-            self.ctx.logger.error(f"{LOG_PREFIX} Apple Calendar 同步失败: {e}")
-
-    async def _clear_expired_overrides(self) -> None:
-        if not self.messaging:
-            return
-        for user_id in await self.messaging.resolve_target_users(
-            include_known_users=True
-        ):
-            await self.store.clear_expired_overrides(user_id)
-
-    # ── 辅助 ───────────────────────────────────────────
-
-    async def _get_user_stream(self, user_id: str):
-        """按用户 ID 查聊天流（用户需私聊过 bot）；user_id 支持 platform:id，裸 ID 默认 qq）"""
-        platform, uid = parse_user_target(user_id)
-        try:
-            return await self.ctx.chat.get_stream_by_user_id(
-                str(uid), platform=platform
-            )
-        except Exception as e:
-            self.ctx.logger.debug(f"{LOG_PREFIX} 查聊天流失败 user={user_id}: {e}")
-            return None
-
-    async def _get_user_nickname(self, user_id: str) -> str:
-        """播报称呼：仅用配置 user_nickname，兜底「主人」（MaiBot 无用户昵称记录）"""
-        fallback = str(self._flat_config().get("user_nickname", "") or "").strip()
-        if fallback and not fallback.isdigit():
-            return fallback
-        return "主人"
-
-    async def _get_user_schedules(self, user_id: str) -> list[ScheduleItem]:
-        schedules_dict = await self.store.get_schedules(user_id)
-        return schedules_dict.get(SCHEDULES_KEY, [])
-
-    @staticmethod
-    def _schedule_time_label(
-        start_dt: datetime, end_str: str | None, all_day: bool
-    ) -> str:
-        """今日日程时间标签：全天 / 15:00-16:30 / 15:00。
-
-        本地与 Apple 两路用同一格式，早安播报合并去重才能命中同一事件。
-        """
-        if all_day:
-            return "全天"
-        if end_str:
-            end_dt = parse_item_time(end_str)
-            if end_dt:
-                return f"{start_dt.strftime('%H:%M')}-{end_dt.strftime('%H:%M')}"
-        return start_dt.strftime("%H:%M")
-
-    async def _get_today_local_schedules_text(
-        self, user_id: str, limit: int = 8
-    ) -> str:
-        schedules = await self._get_user_schedules(user_id)
-        today = datetime.now().date()
-        today_items = []
-        for s in schedules:
-            if not s.time:
-                continue
-            dt = parse_item_time(s.time)
-            if not dt or dt.date() != today:
-                continue
-            all_day = bool(s.all_day) or len((s.time or "").strip()) == 10
-            time_label = self._schedule_time_label(dt, s.end_time, all_day)
-            today_items.append((dt, f"⏰ {time_label} │ {s.title}"))
-        if not today_items:
-            return "暂无"
-        today_items.sort(key=lambda x: x[0])
-        return "\n".join([line for _, line in today_items[:limit]])
-
-    async def _get_today_apple_calendar_text(self, limit: int = 8) -> str:
-        if not self.apple_calendar:
-            return "暂无"
-        try:
-            events, _issues = await self.apple_calendar.get_all_events(days=1)
-            today = datetime.now().date()
-            rows = []
-            for e in events:
-                start_str = e.get("start", "")
-                summary = e.get("summary", "无标题")
-                if not start_str:
+            self._last_apple_issue = reason or None
+            now = datetime.now(self._timezone)
+            for target in self._targets():
+                _, bare = targets.parse_user_target(target)
+                if not bare:
                     continue
                 try:
-                    start_dt = datetime.fromisoformat(start_str)
-                except Exception:
+                    stats = await self.store.sync_from_apple_calendar(
+                        bare, events, allow_delete=not issues, now=now
+                    )
+                except Exception as exc:
+                    self.ctx.logger.warning(
+                        f"{LOG_PREFIX} Apple 同步写入失败 target={target}: {exc}"
+                    )
                     continue
-                if start_dt.date() != today:
-                    continue
-                time_label = self._schedule_time_label(
-                    start_dt, e.get("end"), bool(e.get("all_day"))
-                )
-                rows.append((start_dt, f"⏰ {time_label} │ {summary}"))
-            if not rows:
-                return "暂无"
-            rows.sort(key=lambda x: x[0])
-            return "\n".join([line for _, line in rows[:limit]])
-        except Exception as e:
-            self.ctx.logger.warning(f"{LOG_PREFIX} Apple 今日日程读取失败: {e}")
-            return "获取失败"
-
-    async def _get_notion_pending_text(self, limit: int = 5) -> str:
-        if not self.notion_service:
-            return "暂无"
-        try:
-            pending = await self.notion_service.get_pending_tasks()
-            if not pending:
-                return "暂无"
-            lines = []
-            for task in pending[:limit]:
-                ddl = self.notion_service.format_ddl(task.get("ddl", ""))
-                title = task.get("title", "(无标题)")
-                lines.append(f"- {ddl} | {title}" if ddl else f"- {title}")
-            return "\n".join(lines) if lines else "暂无"
-        except Exception:
-            return "获取失败"
-
-    def _extract_block_lines(self, block: str) -> list[str]:
-        if not block or block in ("暂无", "获取失败"):
-            return []
-        return [line.strip() for line in block.split("\n") if line.strip()]
-
-    def _merge_today_schedule_blocks(
-        self, local_text: str, apple_text: str, limit: int = 12
-    ) -> str:
-        merged = []
-        seen = set()
-        for line in self._extract_block_lines(local_text) + self._extract_block_lines(
-            apple_text
-        ):
-            key = " ".join(line.split())
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(key)
-            if len(merged) >= limit:
-                break
-        if merged:
-            return "\n".join(merged)
-        if apple_text == "获取失败" and local_text in ("暂无", "", None):
-            return "获取失败"
-        return "暂无"
+                if stats["added"] or stats["updated"] or stats["deleted"]:
+                    self.ctx.logger.info(
+                        f"{LOG_PREFIX} Apple→本地同步 target={target} {stats}"
+                    )
 
     # ── @Tool: 日程管理（4 个）─────────────────────────
 
@@ -1689,7 +1220,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             "「后天下午3点」「今天晚上8点」；也支持区间「明天9点到11点」，"
             "以及全天「明天全天」（纯日期如「明天」「2024-01-15」即全天）。\n"
             "- end_datetime_str：string，可选。区间日程的结束时间（如「11点」"
-            "「2024-01-15 16:30」）；不填则为单时间点（Apple 日历按开始后 1 小时）。\n"
+            "「2024-01-15 16:30」）；不填则为单时间点。\n"
             "- description：string，可选。备注描述。"
         ),
         parameters=[

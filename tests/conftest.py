@@ -1,10 +1,8 @@
-"""
-pytest 共享配置：模拟 MaiBot 的插件包加载环境，
+"""pytest 共享配置：模拟 MaiBot 的插件包加载环境，
 并给未安装的运行依赖（aiohttp / apscheduler）装上最小替身。
 
-plugin.py / messaging.py / reminders / services 等模块使用相对导入
-（from ..constants import ...），直接 import 会失败。
-本文件在测试收集前把插件目录注册为 schedule_assistant 包，
+plugin.py / reminders / tools 等模块使用相对导入（from .constants import ...），
+直接 import 会失败。本文件在测试收集前把插件目录注册为 schedule_assistant 包，
 使测试能以包路径导入被测模块。
 
 替身只提供导入与构造所需的最小接口，具体逻辑由各测试自行 stub。
@@ -17,10 +15,17 @@ maibot_sdk 不在此替身：test_config_i18n.py 依赖「SDK 缺失即整文件
 import os
 import sys
 import types
+from pathlib import Path
 
 _PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PLUGIN_DIR not in sys.path:
     sys.path.insert(0, _PLUGIN_DIR)
+
+
+def pytest_configure(config) -> None:
+    """把 pytest 临时目录放到项目内，避开部分 Windows 环境下系统 Temp 的权限问题。"""
+    if not config.option.basetemp:
+        config.option.basetemp = str(Path(_PLUGIN_DIR) / ".pytest_tmp")
 
 
 def _stub_runtime_deps() -> None:

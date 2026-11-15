@@ -1,211 +1,83 @@
-"""
-日程提醒模块（MaiBot 插件版）
+"""日程到点判定与 intent 组装（不做发送）。"""
 
-只负责「谁该被提醒、何时算到点」：扫描 schedule 类型日程、判定提前量窗口，
-按调用方确认的触发结果写防重标记，并把到点事件打包成 intent 文本；麦麦没有开口
-时插件自己直发的纯文本提示也由本模块生成。habit 类型（洗澡/睡觉/喝水）由独立
-定时任务处理，全天事件不提前提醒，均不在此扫描。
-
-发送不在本模块：插件侧把 intent 注入 Maisaka 回复生命周期拟人开口
-（见 plugin.py 的 _schedule_reminder_scan / _schedule_reminder_maisaka）。
-"""
-
-import logging
 from datetime import datetime
-from typing import Any
 
-from ..constants import LOG_PREFIX
-
-logger = logging.getLogger(__name__)
-
-# 麦麦未开口时的补发节奏：请求开口后等这么久仍无开口迹象，插件才自己直发一条。
-# 实际送达时刻由它与扫描间隔共同决定（默认扫描 5 分钟，通常在提醒时刻前后一轮）。
-FALLBACK_DELAY_MINUTES = 2
-# 宽限期下限：日程开始后仍保留兜底机会的时长，调用方取 max(本值, 2 × 扫描间隔)。
-FALLBACK_GRACE_MINUTES = 10
+from .. import notices
 
 
-def parse_item_time(time_str: str) -> datetime | None:
-    """解析日程时间字符串，支持 ISO 格式、时区后缀和普通格式"""
-    if not time_str:
-        return None
-    s = time_str.strip()
-    # 优先使用 fromisoformat（原生支持 ISO 8601，含时区）
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt.replace(tzinfo=None) if dt.tzinfo else dt
-    except (ValueError, TypeError):
-        pass
-    # 再尝试普通格式
-    for fmt in ["%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%H:%M"]:
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    return None
-
-
-def _is_all_day_event(item) -> bool:
-    """判断是否为全天事件"""
-    # 优先检查 all_day 标记
-    if getattr(item, "all_day", False):
-        return True
-    # 检查时间格式：YYYY-MM-DD 表示全天
-    t = (item.time or "").strip()
-    if len(t) == 10 and t.count("-") == 2:
-        try:
-            datetime.strptime(t, "%Y-%m-%d")
-            return True
-        except ValueError:
-            pass
-    return False
+def parse_item_time(value: str, tz=None) -> datetime | None:
+    """兼容旧调用：转给 notices.parse_item_time。"""
+    return notices.parse_item_time(value, tz)
 
 
 async def collect_due_schedule_items(
-    schedule_store,
+    store,
     user_id: str,
-    minutes_before: int = 15,
-    mark_triggered: bool = False,
-    grace_minutes: int = 0,
-) -> list[dict[str, Any]]:
-    """选出即将开始的日程（仅 schedule 类型）。
-
-    提醒时机：开始前 minutes_before 分钟内（0 < 剩余分钟 <= minutes_before）
-    触发一次；整个提前量窗口都有效，配合任意扫描间隔都不会漏掉窗口内的事件。
-
-    grace_minutes > 0 时窗口向开始后延伸（-grace_minutes <= 剩余分钟），让开始后
-    仍能被选到——调用方据此获得补发机会（麦麦没开口时自己直发），默认 0 维持
-    「只在开始前提醒」的原口径。
-
-    防重：last_triggered 持久化，同一事件只提醒一次（重启不重发）；事件改期会
-    重置该标记——Apple 同步（schedule_store.sync_from_apple_calendar）与工具
-    修改（tools/schedule_tools.update_schedule）同口径。
-
-    mark_triggered 默认 False（本函数只挑选，落盘由调用方确认送达后调
-    mark_schedule_items_triggered）：先落标记再触发时，「用户当前不在活跃
-    stream」这类最常见失败会让该事件本期永久不再提醒。只有挑选即等于已提醒、
-    没有回调环节的调用方才显式传 True。
-
-    habit（洗澡/睡觉/喝水）、全天事件、已停用条目不提醒。
-
-    Returns:
-        list[dict]: 到点事件（item_id/title/start/end/start_dt/minutes_until/
-            context/source）；start_dt 是绝对开始时刻，供调用方算补发关窗时刻。
-    """
-    now = datetime.now()
-    due: list[dict[str, Any]] = []
-
-    for item in await schedule_store.list_all_items(user_id):
-        if not item.enabled or item.type == "habit":
-            continue
-        if _is_all_day_event(item):
-            continue
+    minutes_before: int = 10,
+    now: datetime | None = None,
+) -> list[dict]:
+    """挑出「开始前 minutes_before 分钟内」且未提醒过的日程。"""
+    moment = now or datetime.now()
+    tz = moment.tzinfo
+    due: list[dict] = []
+    for item in await store.list_items(user_id):
         if item.last_triggered:
             continue
-
-        item_dt = parse_item_time(item.time)
-        if not item_dt:
+        if notices.is_all_day(item):
             continue
-
-        minutes_until = (item_dt - now).total_seconds() / 60
-        if minutes_until > minutes_before:
+        start = notices.parse_item_time(item.time, tz)
+        if start is None:
             continue
-        if grace_minutes > 0:
-            # 宽限期：开始后仍留在候选集里，供调用方补发
-            if minutes_until < -grace_minutes:
-                continue
-        elif minutes_until <= 0:
+        minutes_until = (start - moment).total_seconds() / 60
+        if minutes_until <= 0 or minutes_until > minutes_before:
             continue
-
-        end_dt = parse_item_time(item.end_time) if item.end_time else None
+        end = notices.parse_item_time(item.end_time, tz) if item.end_time else None
         due.append(
             {
                 "item_id": item.id,
                 "title": item.title,
-                "start": item_dt.strftime("%H:%M"),
-                "end": end_dt.strftime("%H:%M") if end_dt else "",
+                "start": start.strftime("%H:%M"),
+                "end": end.strftime("%H:%M") if end else "",
+                "time_label": notices.time_label(start, item.end_time, False, tz),
+                "ahead_label": notices.ahead_label(int(minutes_until)),
                 "minutes_until": int(minutes_until),
-                "start_dt": item_dt,
                 "context": (item.context or "").strip(),
                 "source": "apple" if item.apple_uid else "local",
             }
         )
-        logger.debug(
-            f"{LOG_PREFIX} 日程到点提醒: {item.title} ({item.time}) "
-            f"剩余 {int(minutes_until)} 分钟"
-        )
-        if mark_triggered:
-            item.last_triggered = now.isoformat()
-            await schedule_store.update_item(user_id, item)
-
     return due
 
 
-async def mark_schedule_items_triggered(
-    schedule_store,
-    user_id: str,
-    items: list[dict[str, Any]],
-) -> None:
-    """触发成功后回写防重标记（配合 collect_due_schedule_items(mark_triggered=False)）。
-
-    只按 item_id 打标，且已有标记的不覆盖（幂等，保留先落盘的时间戳）——
-    这次提醒已就这条日程发生过，同一条目不再因为回写时机不同而重复提醒。
-    """
-    now_iso = datetime.now().isoformat()
-    item_ids = {it.get("item_id") for it in items}
-    for item in await schedule_store.list_all_items(user_id):
-        if item.id not in item_ids:
-            continue
-        if item.last_triggered:
-            continue
-        item.last_triggered = now_iso
-        await schedule_store.update_item(user_id, item)
+async def mark_items_triggered(store, user_id: str, items: list[dict]) -> None:
+    """触发成功后幂等写 last_triggered。"""
+    ids = {item.get("item_id") for item in items}
+    stamp = datetime.now().isoformat()
+    for item in await store.list_items(user_id):
+        if item.id in ids and not item.last_triggered:
+            item.last_triggered = stamp
+            await store.update_item(user_id, item)
 
 
-def build_schedule_reminder_intent(items: list[dict[str, Any]]) -> str:
-    """把到点日程打包成一条 Maisaka intent（多事件合并为一次开口，避免刷屏）"""
+def build_intent(items: list[dict]) -> str:
+    """把到点日程合并成一条 Maisaka intent。"""
     lines = []
-    for it in items:
-        title = (it.get("title") or "").strip() or "无标题"
-        start = it.get("start") or ""
-        end = it.get("end") or ""
-        time_label = f"{start}-{end}" if start and end else start
-        minutes = it.get("minutes_until") or 0
-        if minutes > 0:
-            timing = f"{time_label} 开始（约 {minutes} 分钟后）"
-        else:
-            timing = f"{time_label} 马上开始"
+    for item in items:
+        title = (item.get("title") or "").strip() or "无标题"
+        start = item.get("start") or ""
+        end = item.get("end") or ""
+        label = f"{start}-{end}" if start and end else start
+        minutes = int(item.get("minutes_until") or 0)
+        timing = (
+            f"{label} 开始（约 {minutes} 分钟后）"
+            if minutes > 0
+            else f"{label} 马上开始"
+        )
         line = f"- 「{title}」{timing}"
-        context = (it.get("context") or "").strip()
+        context = (item.get("context") or "").strip()
         if context:
             line += f"｜{context}"
         lines.append(line)
     return (
-        "日程提醒：以下日程快开始了，请自然地随口提醒用户"
-        "（简短口语化，可带关切）：\n" + "\n".join(lines)
+        "日程提醒：以下日程快开始了，请自然地随口提醒用户（简短口语化）：\n"
+        + "\n".join(lines)
     )
-
-
-def build_fallback_text(items: list[dict[str, Any]]) -> str:
-    """麦麦没开口时插件直发的纯文本提醒（不拟人、不经过 LLM，多事件合并一条）。
-
-    这条消息由插件自己发出，用户看不到麦麦的语气，因此只写事实：标题、时间、
-    是否已到点。措辞与 build_schedule_reminder_intent 保持同一套时间标签。
-    """
-    lines = []
-    for it in items:
-        title = (it.get("title") or "").strip() or "无标题"
-        start = it.get("start") or ""
-        end = it.get("end") or ""
-        time_label = f"{start}-{end}" if start and end else start
-        minutes = int(it.get("minutes_until") or 0)
-        if minutes > 0:
-            timing = f"{time_label} 开始（还有 {minutes} 分钟）"
-        elif minutes == 0:
-            timing = f"{time_label} 马上开始"
-        else:
-            timing = f"{time_label} 已到时间（{abs(minutes)} 分钟前）"
-        lines.append(f"- 「{title}」{timing.strip()}")
-    if not lines:
-        return ""
-    return "日程提醒：\n" + "\n".join(lines)

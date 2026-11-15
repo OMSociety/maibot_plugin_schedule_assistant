@@ -10,8 +10,9 @@ import re
 import time
 import uuid
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from urllib.parse import urljoin, urlparse
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -50,10 +51,12 @@ class AppleCalendar:
         webcal_urls: list[str] | None = None,
         calendar_id: str | None = None,
         caldav_host: str | None = None,
+        timezone: tzinfo | None = None,
     ):
         self.username = username
         self.app_password = app_password
         self.webcal_urls = webcal_urls or []
+        self._tz = timezone or ZoneInfo("Asia/Shanghai")
         self._principal_url: str | None = None
         self._caldav_base_url: str | None = None
         self._caldav_base_domain: str | None = None
@@ -71,6 +74,12 @@ class AppleCalendar:
         self._caldav_entry_url = self._normalize_entry_url(caldav_host)
         self._last_discover_reason: str | None = None
         self._calendars_logged = False
+
+    def _now(self) -> datetime:
+        return datetime.now(self._tz) if self._tz else datetime.now()
+
+    def _local_tz(self) -> tzinfo:
+        return self._tz or datetime.now().astimezone().tzinfo or timezone.utc
 
     def _auth_header(self) -> str:
         creds = f"{self.username}:{self.app_password}"
@@ -506,7 +515,7 @@ class AppleCalendar:
         - DTSTART;VALUE=DATE:20260202        (全天事件)
         """
         events = []
-        local_tz = datetime.now().astimezone().tzinfo
+        local_tz = self._local_tz()
 
         for ev in re.findall(r"BEGIN:VEVENT(.*?)END:VEVENT", ical_data, re.DOTALL):
             summary_m = re.search(r"SUMMARY:([^\r\n]+)", ev)
@@ -693,7 +702,7 @@ class AppleCalendar:
 
     def _cleanup_expired_cache(self):
         """清理过期的缓存（只保留今天的缓存）"""
-        today = datetime.now().strftime("%Y%m%d")
+        today = self._now().strftime("%Y%m%d")
         # 清理所有不以今天日期开头的缓存键（包括旧格式的整数键）
         expired_keys = [
             k for k in list(self._events_cache.keys()) if not str(k).startswith(today)
@@ -713,7 +722,7 @@ class AppleCalendar:
         调用方不得据此判定事件已在 Apple 端删除。
         """
         # 缓存键包含日期，避免跨天返回错误数据
-        today = datetime.now().strftime("%Y%m%d")
+        today = self._now().strftime("%Y%m%d")
         cache_key = f"{today}_{int(days if days else 1)}"
 
         # 清理过期缓存
@@ -830,17 +839,23 @@ class AppleCalendar:
             (await self._list_calendars_with_status())[0], calendar_id
         )
         cal_url = f"{self._caldav_base_url}/{resolved_id}/"
-        created = datetime.now().strftime("%Y%m%dT%H%M%S")
+        tz = self._local_tz()
+        tzid = getattr(tz, "key", None) or "UTC"
+        start_aware = start if start.tzinfo else start.replace(tzinfo=tz)
+        end_aware = end or (start + timedelta(hours=1))
+        if end_aware.tzinfo is None:
+            end_aware = end_aware.replace(tzinfo=tz)
+        created = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         if all_day:
             # 全天事件：VALUE=DATE，DTEND 为独占次日（RFC 5545）
             dtstart_line = f"DTSTART;VALUE=DATE:{start.strftime('%Y%m%d')}"
             dtend_fmt = (end or (start + timedelta(days=1))).strftime("%Y%m%d")
             dtend_line = f"DTEND;VALUE=DATE:{dtend_fmt}"
         else:
-            dtstart_fmt = start.strftime("%Y%m%dT%H%M%S")
-            dtend_fmt = (end or (start + timedelta(hours=1))).strftime("%Y%m%dT%H%M%S")
-            dtstart_line = f"DTSTART;TZID=Asia/Shanghai:{dtstart_fmt}"
-            dtend_line = f"DTEND;TZID=Asia/Shanghai:{dtend_fmt}"
+            dtstart_fmt = start_aware.astimezone(tz).strftime("%Y%m%dT%H%M%S")
+            dtend_fmt = end_aware.astimezone(tz).strftime("%Y%m%dT%H%M%S")
+            dtstart_line = f"DTSTART;TZID={tzid}:{dtstart_fmt}"
+            dtend_line = f"DTEND;TZID={tzid}:{dtend_fmt}"
         lines = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
@@ -954,22 +969,3 @@ class AppleCalendar:
 
     async def close(self):
         pass
-
-    async def get_late_night_events(self) -> list[dict]:
-        events, _issues = await self.get_all_events(days=1)
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        late_night_end = today + timedelta(hours=6)
-        late_night = []
-        for e in events:
-            start_str = e.get("start", "")
-            if not start_str:
-                continue
-            try:
-                start = datetime.fromisoformat(start_str)
-                if start.hour == 0 and start.minute == 0 and start.second == 0:
-                    continue
-                if today <= start < late_night_end:
-                    late_night.append(e)
-            except ValueError:
-                continue
-        return late_night
