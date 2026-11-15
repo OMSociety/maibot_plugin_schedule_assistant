@@ -18,7 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 基础设置新增 `timezone`（IANA 时区名，默认 `Asia/Shanghai`），调度、日程时间解释与 Apple 日历读写统一使用该时区；Apple 写入的 `TZID` 跟随配置，不再硬编码。
 - 五份 intent 模板：`prompt_morning`、`prompt_bath`、`prompt_sleep`、`prompt_water`、`prompt_schedule`；非空模板整段接管，插件不再追加约束。
 - Notion 待办三态：未配置不出现待办行，读取失败显示「获取失败」，成功但为空显示「暂无」。
-- 日程目标用户只来自 `user_ids`，配置格式为 `platform:裸ID`。
 
 ### 变更
 
@@ -26,14 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 推送统一为纯文本，移除 Markdown 渲染与 `qq_markdown` 降级路径。
 - 日程提醒触发成功即写防重标记，不再依赖补发结果。
 - 时间解析修正：「晚上12点」解释为次日 00:00，「中午12点」保持 12:00。
-- 插件清单基线升级：宿主 `1.4.5–1.4.99`、SDK `2.23.0–2.23.99`；capabilities 收敛为 `chat.get_stream_by_user_id`、`maisaka.proactive.trigger`、`config.get`。
+- 插件清单基线升级：宿主 `1.4.5–1.4.99`、SDK `2.23.0–2.23.99`；capabilities 收敛为 `chat.get_stream_by_user_id`、`maisaka.proactive.trigger`。
+- 破坏性变更：日程工具改用 ISO 8601 结构化时间（`start` / `end` / `all_day`），移除自然语言解析器；拒绝过去时间与 2100 年之后的时间。
+- 存储键与 `user_ids` 配置格式统一为 `platform:裸ID`，启动时把旧的裸 ID 存储键迁移到新键并删除旧键。
 
 ### 修复
 
 - 日程扫描与 `list_schedules` 不再混用 aware / 朴素时间，提醒与查询恢复。
 - 定时任务使用配置时区，并设置 300 秒 misfire 宽限；查不到聊天流或宿主未接受任务时记录 warning。
-- 日程工具改用 ISO 8601 结构化时间（`start` / `end` / `all_day`），移除自然语言解析器；拒绝过去时间与 2100 年之后的时间。
-- 存储键升级为 `platform:裸ID`，启动时把旧的裸 ID 键复制迁移并保留旧键。
 - Apple 同步不再删除同步窗口之外的本地条目，空事件列表也不触发删除。
 - 删除日程先删 Apple 事件，失败时保留本地条目并报错。
 - CalDAV / WebCal 请求不再跟随重定向，3xx 直接失败。
@@ -52,7 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `timezone` setting (IANA name, default `Asia/Shanghai`) shared by scheduling, schedule-time interpretation and Apple CalDAV reads/writes; the Apple `TZID` now follows the configured zone instead of the hard-coded value.
 - Five intent templates: `prompt_morning`, `prompt_bath`, `prompt_sleep`, `prompt_water`, `prompt_schedule`; a non-empty template takes over completely with no plugin-appended constraints.
 - Notion todos now distinguish three states: not configured (no todo line), read failure (`获取失败`), and empty (`暂无`).
-- Target users come only from `user_ids`, each entry in `platform:bare-id` form.
 
 ### Changed
 
@@ -60,14 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All pushes are plain text; Markdown rendering and the `qq_markdown` fallback path were removed.
 - A schedule reminder marks the item as triggered once the proactive request is accepted, independent of any fallback result.
 - Time parsing fix: `晚上12点` now means the next day at 00:00, while `中午12点` stays at 12:00.
-- Manifest baseline raised to host `1.4.5–1.4.99` and SDK `2.23.0–2.23.99`; capabilities reduced to `chat.get_stream_by_user_id`, `maisaka.proactive.trigger`, `config.get`.
+- Manifest baseline raised to host `1.4.5–1.4.99` and SDK `2.23.0–2.23.99`; capabilities reduced to `chat.get_stream_by_user_id` and `maisaka.proactive.trigger`.
+- Breaking change: schedule tools now take ISO 8601 `start` / `end` / `all_day` instead of natural-language text; past times and years beyond 2100 are rejected.
+- Storage keys and the `user_ids` config format are now `platform:bare-id`; legacy bare-id storage keys are migrated to the new key on startup and removed.
 
 ### Fixed
 
 - Schedule scanning and `list_schedules` no longer mix aware and naive datetimes.
 - Cron jobs use the configured timezone and a 300-second misfire grace; missing streams and rejected proactive tasks are logged as warnings.
-- Schedule tools now take ISO 8601 `start` / `end` / `all_day` instead of natural-language text; past times and years beyond 2100 are rejected.
-- Storage keys are now `platform:bare-id`; legacy bare-id keys are copied on startup and kept in place.
 - Apple sync never deletes entries outside the sync window, and an empty event list never triggers deletion.
 - Deleting a schedule removes the Apple event first; a failed delete keeps the local entry and reports the error.
 - CalDAV / WebCal requests no longer follow redirects; 3xx responses fail.

@@ -171,19 +171,19 @@ MaiBot WebUI → 插件市场 → 搜索 `schedule_assistant`
 
 ```
 用户: 帮我记一个日程，明天下午3点开组会，记得带电脑
-🤖 → create_schedule(title="组会", start="2026-09-02T15:00", description="记得带电脑")
+-> create_schedule(title="组会", start="2026-09-02T15:00", description="记得带电脑")
     ✅ 已创建日程「组会」，时间：09-02 15:00
 
 用户: 明天9点到11点开组会
-🤖 → create_schedule(title="组会", start="2026-09-02T09:00", end="2026-09-02T11:00")
+-> create_schedule(title="组会", start="2026-09-02T09:00", end="2026-09-02T11:00")
     ✅ 已创建日程「组会」，时间：09-02 09:00-11:00
 
 用户: 后天全天团建
-🤖 → create_schedule(title="团建", start="2026-09-03", all_day=true)
+-> create_schedule(title="团建", start="2026-09-03", all_day=true)
     ✅ 已创建日程「团建」，时间：09-03 全天
 
 用户: 我下周有什么安排
-🤖 → list_schedules(days=7)
+-> list_schedules(days=7)
     📋 最近 7 天的日程：
     ━━━ 09-01 周一 ━━━
       ⏰ 14:30 │ 学术英语
