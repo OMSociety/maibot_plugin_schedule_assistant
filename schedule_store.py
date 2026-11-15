@@ -116,7 +116,7 @@ class ScheduleStore:
         return f"schedules_{user_id}"
 
     async def migrate_user(self, old_user_id: str, new_user_id: str) -> bool:
-        """把旧裸 ID 键下的日程复制到完整目标键；旧键保留不删。"""
+        """把旧裸 ID 键下的日程迁移到完整目标键，成功后删除旧键。"""
         if not old_user_id or not new_user_id or old_user_id == new_user_id:
             return False
         async with self._lock:
@@ -129,8 +129,9 @@ class ScheduleStore:
             if data.get(new_key):
                 return False
             data[new_key] = list(old_items)
+            del data[old_key]
             self._write_all(data)
-        self.logger.info(f"{LOG_PREFIX} 日程键迁移 {old_key} → {new_key}")
+        self.logger.info(f"{LOG_PREFIX} 日程键迁移完成并删除旧键 {old_key} → {new_key}")
         return True
 
     def _raw_items(self, user_id: str) -> list[dict]:

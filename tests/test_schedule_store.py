@@ -1,6 +1,7 @@
 """JSON 日程存储与 Apple 合并。"""
 
 import asyncio
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -119,3 +120,35 @@ def test_sync_deletes_missing_uid_only_when_allowed(tmp_path):
         store.sync_from_apple_calendar("u1", second, allow_delete=True, now=now)
     )
     assert allowed["deleted"] == 1 and len(run(store.list_items("u1"))) == 1
+
+
+def test_migrate_user_moves_items_and_drops_old_key(tmp_path):
+    store = make_store(tmp_path)
+    store.logger = logging.getLogger("test")
+    item = ScheduleItem.create(title="组会", time="2026-09-10 09:00")
+    run(store.add_item("10001", item))
+
+    assert run(store.migrate_user("10001", "qq:10001")) is True
+    migrated = run(store.list_items("qq:10001"))
+    assert len(migrated) == 1 and migrated[0].title == "组会"
+    assert run(store.list_items("10001")) == []
+    assert "schedules_10001" not in store._read_all()
+
+
+def test_migrate_user_keeps_existing_target_data(tmp_path):
+    store = make_store(tmp_path)
+    store.logger = logging.getLogger("test")
+    run(
+        store.add_item(
+            "10001", ScheduleItem.create(title="旧", time="2026-09-10 09:00")
+        )
+    )
+    run(
+        store.add_item(
+            "qq:10001", ScheduleItem.create(title="新", time="2026-09-11 09:00")
+        )
+    )
+
+    assert run(store.migrate_user("10001", "qq:10001")) is False
+    assert [item.title for item in run(store.list_items("qq:10001"))] == ["新"]
+    assert [item.title for item in run(store.list_items("10001"))] == ["旧"]
