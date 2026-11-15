@@ -49,7 +49,8 @@ class TimedMessageEngine:
                 return ("interval", {"minutes": minutes})
             parsed = self._parse_hhmm(text)
             if parsed is not None:
-                return CronTrigger(hour=parsed[0], minute=parsed[1])
+                timezone = getattr(self.scheduler, "timezone", None)
+                return CronTrigger(hour=parsed[0], minute=parsed[1], timezone=timezone)
             self.logger.warning(f"{LOG_PREFIX} 不支持的触发方式: {trigger!r}")
             return None
         return trigger
@@ -58,7 +59,7 @@ class TimedMessageEngine:
         normalized = self._normalize_trigger(trigger)
         if normalized is None:
             return False
-        options = {"id": name, "replace_existing": True}
+        options = {"id": name, "replace_existing": True, "misfire_grace_time": 300}
         options.update(job_opts)
         try:
             if (

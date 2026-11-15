@@ -873,11 +873,12 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         self._last_apple_issue: str | None = None
 
     def _targets(self) -> list[str]:
-        return [
-            str(item).strip()
-            for item in (self.config.basic.user_ids or [])
-            if str(item).strip()
-        ]
+        result: list[str] = []
+        for item in self.config.basic.user_ids or []:
+            platform, bare = targets.parse_user_target(str(item))
+            if bare:
+                result.append(f"{platform}:{bare}")
+        return result
 
     def _resolve_timezone(self) -> ZoneInfo:
         name = str(self.config.basic.timezone or "").strip() or "Asia/Shanghai"
@@ -893,6 +894,15 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         self.store.set_data_dir(str(self.ctx.paths.data_dir))
         self.store.logger = self.ctx.logger
         self._timezone = self._resolve_timezone()
+        for target in self._targets():
+            platform, bare = targets.parse_user_target(target)
+            if bare and f"{platform}:{bare}" == target:
+                try:
+                    await self.store.migrate_user(bare, target)
+                except Exception as exc:  # noqa: BLE001
+                    self.ctx.logger.warning(
+                        f"{LOG_PREFIX} 日程键迁移失败 target={target}: {exc}"
+                    )
         self.scheduler = AsyncIOScheduler(timezone=self._timezone)
         self.timed_engine = TimedMessageEngine(self.scheduler, self.ctx.logger)
         await self._ensure_services()
@@ -968,10 +978,11 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 )
 
             if conf.calendar_sync.enable_apple_calendar_sync:
-                if (
+                has_account = bool(
                     conf.calendar_sync.apple_username
                     and conf.calendar_sync.apple_app_password
-                ):
+                )
+                if has_account or conf.calendar_sync.webcal_urls:
                     self.apple_calendar = AppleCalendar(
                         username=conf.calendar_sync.apple_username,
                         app_password=conf.calendar_sync.apple_app_password,
@@ -984,7 +995,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                     )
                 else:
                     self.ctx.logger.warning(
-                        f"{LOG_PREFIX} 已开启 Apple 同步但缺少账号或 App 专用密码"
+                        f"{LOG_PREFIX} 已开启 Apple 同步但账号与 WebCal 地址都为空"
                     )
 
             self.morning = MorningBriefing(
@@ -1213,11 +1224,10 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         detailed_description=(
             "参数说明：\n"
             "- title：string，必填。日程标题/内容。\n"
-            "- datetime_str：string，必填。日期时间，支持「2024-01-15 14:30」「明天9点」"
-            "「后天下午3点」「今天晚上8点」；也支持区间「明天9点到11点」，"
-            "以及全天「明天全天」（纯日期如「明天」「2024-01-15」即全天）。\n"
-            "- end_datetime_str：string，可选。区间日程的结束时间（如「11点」"
-            "「2024-01-15 16:30」）；不填则为单时间点。\n"
+            "- start：string，必填。ISO 8601 本地时间，如 2026-11-16T09:00；"
+            "全天日程只填日期 2026-11-16，并把 all_day 设为 true。\n"
+            "- end：string，可选。结束时间，格式同 start；全天日程忽略。\n"
+            "- all_day：boolean，可选，默认 false。全天日程置 true。\n"
             "- description：string，可选。备注描述。"
         ),
         parameters=[
@@ -1228,16 +1238,21 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 required=True,
             ),
             ToolParameterInfo(
-                name="datetime_str",
+                name="start",
                 param_type=ToolParamType.STRING,
-                description="日期时间，如「2024-01-15 14:30」「明天9点」「明天9点到11点」"
-                "（区间）「明天全天」（全天）",
+                description="ISO 8601 开始时间，如 2026-11-16T09:00；全天只填日期 2026-11-16",
                 required=True,
             ),
             ToolParameterInfo(
-                name="end_datetime_str",
+                name="end",
                 param_type=ToolParamType.STRING,
-                description="可选的结束时间（如「11点」「2024-01-15 16:30」），区间日程用",
+                description="可选的结束时间，格式同 start",
+                required=False,
+            ),
+            ToolParameterInfo(
+                name="all_day",
+                param_type=ToolParamType.BOOLEAN,
+                description="是否为全天日程，默认 false",
                 required=False,
             ),
             ToolParameterInfo(
@@ -1253,8 +1268,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         return await create_schedule(
             self,
             kwargs.get("title", ""),
-            kwargs.get("datetime_str", ""),
-            kwargs.get("end_datetime_str", ""),
+            kwargs.get("start", ""),
+            kwargs.get("end", ""),
+            bool(kwargs.get("all_day")),
             kwargs.get("description", ""),
             kwargs.get("message"),
         )
@@ -1296,19 +1312,19 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
         "list_schedules",
         description="查看日程列表。当用户想要查询日程安排时调用。",
         brief_description="查看日程",
-        detailed_description="参数说明：\n- date：string，可选。日期（YYYY-MM-DD），缺省为今天。",
+        detailed_description="参数说明：\n- days：integer，可选。查看未来几天的日程，缺省 7 天。",
         parameters=[
             ToolParameterInfo(
-                name="date",
-                param_type=ToolParamType.STRING,
-                description="日期（YYYY-MM-DD），缺省为今天",
+                name="days",
+                param_type=ToolParamType.INTEGER,
+                description="查看未来几天的日程，缺省 7 天",
                 required=False,
             ),
         ],
     )
     async def handle_list_schedules(self, **kwargs):
         await self._ensure_services()
-        return await list_schedules(self, kwargs.get("date", ""), kwargs.get("message"))
+        return await list_schedules(self, kwargs.get("days"), kwargs.get("message"))
 
     @Tool(
         "update_schedule",
@@ -1318,9 +1334,10 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             "参数说明：\n"
             "- schedule_id：string，必填。日程ID。\n"
             "- title：string，可选。新标题。\n"
-            "- datetime_str：string，可选。新时间，支持区间「明天9点到11点」与"
-            "全天「明天全天」（纯日期即全天）。\n"
-            "- end_datetime_str：string，可选。区间日程的新结束时间，需与 datetime_str 一起给。"
+            "- start：string，可选。新的 ISO 8601 开始时间，如 2026-11-16T09:00；"
+            "全天日程只填日期 2026-11-16，并把 all_day 设为 true。\n"
+            "- end：string，可选。新的结束时间，格式同 start；需与 start 一起给。\n"
+            "- all_day：boolean，可选。改全天日程时置 true，需与 start 一起给。"
         ),
         parameters=[
             ToolParameterInfo(
@@ -1336,15 +1353,21 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 required=False,
             ),
             ToolParameterInfo(
-                name="datetime_str",
+                name="start",
                 param_type=ToolParamType.STRING,
-                description="新时间（如「明天9点」「明天9点到11点」「明天全天」）",
+                description="新的 ISO 8601 开始时间，如 2026-11-16T09:00",
                 required=False,
             ),
             ToolParameterInfo(
-                name="end_datetime_str",
+                name="end",
                 param_type=ToolParamType.STRING,
-                description="区间日程的新结束时间（如「11点」），需与 datetime_str 一起给",
+                description="新的结束时间，格式同 start，需与 start 一起给",
+                required=False,
+            ),
+            ToolParameterInfo(
+                name="all_day",
+                param_type=ToolParamType.BOOLEAN,
+                description="全天日程置 true，需与 start 一起给",
                 required=False,
             ),
         ],
@@ -1355,8 +1378,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             self,
             kwargs.get("schedule_id", ""),
             kwargs.get("title", ""),
-            kwargs.get("datetime_str", ""),
-            kwargs.get("end_datetime_str", ""),
+            kwargs.get("start", ""),
+            kwargs.get("end", ""),
+            bool(kwargs.get("all_day")),
             kwargs.get("message"),
         )
 

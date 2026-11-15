@@ -66,6 +66,8 @@ async def trigger_proactive(
     stream = await get_user_stream(ctx, target)
     stream_id = extract_stream_id(stream)
     if not stream_id:
+        if logger:
+            logger.warning(f"{LOG_PREFIX} 查不到聊天流，无法主动开口 target={target}")
         return False
     try:
         result = await ctx.maisaka.proactive.trigger(
@@ -78,10 +80,22 @@ async def trigger_proactive(
         if logger:
             logger.warning(f"{LOG_PREFIX} Maisaka 主动触发失败 target={target}: {exc}")
         return False
-    if isinstance(result, dict) and result.get("success") is False:
+    if not isinstance(result, dict):
+        if logger:
+            logger.warning(
+                f"{LOG_PREFIX} Maisaka 返回非字典结果 target={target}: {result!r}"
+            )
+        return False
+    if result.get("success") is False:
         if logger:
             logger.warning(
                 f"{LOG_PREFIX} Maisaka 主动触发被拒绝 target={target}: {result.get('error')}"
+            )
+        return False
+    if result.get("queued") is not True:
+        if logger:
+            logger.warning(
+                f"{LOG_PREFIX} Maisaka 未接受主动任务 target={target}: {result!r}"
             )
         return False
     return True

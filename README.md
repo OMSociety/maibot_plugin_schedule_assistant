@@ -136,7 +136,7 @@ MaiBot WebUI → 插件市场 → 搜索 `schedule_assistant`
 | 配置项 | 占位符 |
 |:------|:-------|
 | `prompt_morning` | `{date} {weekday} {weather_current} {weather_forecast} {agenda} {notion_todos}` |
-| `prompt_bath` / `prompt_sleep` | `{current_time} {default_time}` |
+| `prompt_bath` / `prompt_sleep` | `{current_time}` |
 | `prompt_water` | `{current_time}` |
 | `prompt_schedule` | `{item_title} {time_label} {ahead_label} {item_context}` |
 
@@ -162,29 +162,29 @@ MaiBot WebUI → 插件市场 → 搜索 `schedule_assistant`
 
 | 工具 | 说明 | 关键参数 |
 |:-----|:-----|:---------|
-| `create_schedule` | 创建日程（单点 / 区间 / 全天） | title / datetime_str / end_datetime_str / description |
+| `create_schedule` | 创建日程（单点 / 区间 / 全天） | title / start / end / all_day / description |
 | `delete_schedule` | 删除日程 | schedule_id / title_keyword |
-| `list_schedules` | 查看日程 | date（缺省今天） |
-| `update_schedule` | 修改日程（单点 / 区间 / 全天） | schedule_id / title / datetime_str / end_datetime_str |
+| `list_schedules` | 查看未来几天的日程 | days（缺省 7） |
+| `update_schedule` | 修改日程（单点 / 区间 / 全天） | schedule_id / title / start / end / all_day |
 
-> **时间写法**：数字/ISO 格式（`2024-01-15 14:30`、`2024-01-15 09:00-11:00`、`2024-01-16`）或中文口语（「明天9点」「明天9点到11点」「明天全天」）；纯日期即全天，两端纯日期的区间（「明天到后天」）取开始日。
+> **时间写法**：`start` / `end` 使用 ISO 8601 本地时间（`2026-11-16T09:00`）；全天日程只填日期（`2026-11-16`）并把 `all_day` 设为 `true`。过去的开始时间会被拒绝；中文口语由模型换算成 ISO 后再调用工具。
 
 ```
 用户: 帮我记一个日程，明天下午3点开组会，记得带电脑
-🤖 → create_schedule(title="组会", datetime_str="明天下午3点", description="记得带电脑")
+🤖 → create_schedule(title="组会", start="2026-09-02T15:00", description="记得带电脑")
     ✅ 已创建日程「组会」，时间：09-02 15:00
 
 用户: 明天9点到11点开组会
-🤖 → create_schedule(title="组会", datetime_str="明天9点到11点")
+🤖 → create_schedule(title="组会", start="2026-09-02T09:00", end="2026-09-02T11:00")
     ✅ 已创建日程「组会」，时间：09-02 09:00-11:00
 
 用户: 后天全天团建
-🤖 → create_schedule(title="团建", datetime_str="后天全天")
+🤖 → create_schedule(title="团建", start="2026-09-03", all_day=true)
     ✅ 已创建日程「团建」，时间：09-03 全天
 
 用户: 我下周有什么安排
-🤖 → list_schedules(date="7")
-    📋 接下来7天日程（共3个）：
+🤖 → list_schedules(days=7)
+    📋 最近 7 天的日程：
     ━━━ 09-01 周一 ━━━
       ⏰ 14:30 │ 学术英语
 ```
@@ -203,10 +203,10 @@ A：主动推送通过 `user_ids`（`platform:裸ID`）定位你的**私聊流**
 A：所有推送都交给 Maisaka 决定是否开口（`proactive.trigger`），它会结合人格与语境选择不打扰，插件不补发、不拦截。这是 2.0 的设计取舍；需要「一定送达」的提醒暂时无法由本插件保证。
 
 **Q：Apple 日历的日程也能提前提醒吗？**
-A：能，需要同时满足：① `enable_schedule_reminder` 开启并设好提前量；② `enable_apple_calendar_sync` 开启并配好 Apple ID / App 专用密码。每轮提醒扫描前会触发一次同步（300 秒内的重复拉取走缓存），手机上新加或改期的事件也能赶上提前提醒。
+A：能，需要同时满足：① `enable_schedule_reminder` 开启并设好提前量；② `enable_apple_calendar_sync` 开启并配好 Apple ID / App 专用密码或 WebCal 地址。每轮提醒扫描前会触发一次同步；同步只增量合并，**不会删除同步窗口（前 1 天到后 7 天）之外的本地日程**，手机上新加或改期的事件也能赶上提前提醒。
 
 **Q：Apple 日历怎么配？**
-A：需要 Apple ID + **App 专用密码**（appleid.apple.com → 安全性 → App 专用密码），填 `apple_username / apple_app_password`。读写时区由 `timezone` 决定。
+A：两种方式任选：Apple ID + **App 专用密码**（appleid.apple.com → 安全性 → App 专用密码），填 `apple_username / apple_app_password`；或只填 `webcal_urls` 订阅公开日历。读写时区由 `timezone` 决定。
 
 **Q：数据存在哪？**
 A：MaiBot 插件数据目录 `data/plugins/omsociety.schedule-assistant/schedule_data.json`。

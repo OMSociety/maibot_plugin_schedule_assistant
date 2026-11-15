@@ -138,8 +138,14 @@ class AppleCalendar:
                         data=data,
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=timeout),
+                        allow_redirects=False,
                     ) as resp,
                 ):
+                    if 300 <= resp.status < 400:
+                        logger.warning(
+                            f"[AppleCalendar] 拒绝重定向 {resp.status} {url}"
+                        )
+                        return 0, None
                     if resp.status >= 500 and attempt < retries - 1:
                         await asyncio.sleep(1 * (attempt + 1))
                         last_error = aiohttp.ClientResponseError(

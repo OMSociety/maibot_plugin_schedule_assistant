@@ -115,6 +115,24 @@ class ScheduleStore:
     def _key(user_id: str) -> str:
         return f"schedules_{user_id}"
 
+    async def migrate_user(self, old_user_id: str, new_user_id: str) -> bool:
+        """把旧裸 ID 键下的日程复制到完整目标键；旧键保留不删。"""
+        if not old_user_id or not new_user_id or old_user_id == new_user_id:
+            return False
+        async with self._lock:
+            data = self._read_all()
+            old_key = self._key(old_user_id)
+            new_key = self._key(new_user_id)
+            old_items = data.get(old_key)
+            if not isinstance(old_items, list) or not old_items:
+                return False
+            if data.get(new_key):
+                return False
+            data[new_key] = list(old_items)
+            self._write_all(data)
+        self.logger.info(f"{LOG_PREFIX} 日程键迁移 {old_key} → {new_key}")
+        return True
+
     def _raw_items(self, user_id: str) -> list[dict]:
         raw = self._read_all().get(self._key(user_id), [])
         return raw if isinstance(raw, list) else []
@@ -250,10 +268,21 @@ class ScheduleStore:
                     existing["last_triggered"] = None
                     stats["updated"] += 1
             if allow_delete:
+                window_lo = now_naive - timedelta(days=1)
+                window_hi = now_naive + timedelta(days=7)
+
+                def _within_window(item: dict) -> bool:
+                    parsed = self._event_time(item.get("time", ""), tz)
+                    return parsed is not None and window_lo <= parsed[1] <= window_hi
+
                 kept = [
                     item
                     for item in items
-                    if not item.get("apple_uid") or item["apple_uid"] in apple_uids
+                    if not (
+                        item.get("apple_uid")
+                        and _within_window(item)
+                        and item["apple_uid"] not in apple_uids
+                    )
                 ]
                 stats["deleted"] = len(items) - len(kept)
                 items = kept

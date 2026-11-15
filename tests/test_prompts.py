@@ -10,7 +10,6 @@ def test_custom_template_takes_over_whole():
         "自定义 {current_time}",
     )
     assert out == "自定义 22:00"
-    assert "输出要求" not in out
 
 
 def test_unknown_placeholder_kept_as_is():
@@ -20,13 +19,14 @@ def test_unknown_placeholder_kept_as_is():
     )
 
 
-def test_builtin_bath_mentions_time_and_limit():
+def test_builtin_bath_is_plain_intent():
     out = render("bath", {"current_time": "22:05", "default_time": "22:00"})
-    assert "22:05" in out and "22:00" in out
-    assert "40 字以内" in out
+    assert "22:05" in out
+    assert "提醒用户去洗澡" in out
+    assert "20:05" not in out
 
 
-def test_builtin_morning_contains_requirements_and_example():
+def test_builtin_morning_contains_requirement_and_example():
     out = render(
         "morning",
         {
@@ -38,13 +38,12 @@ def test_builtin_morning_contains_requirements_and_example():
             "notion_todos": "暂无",
         },
     )
-    assert "写作要求" in out
-    assert "示例" in out
-    assert "120 字以内" in out
+    assert "示例（其语气不纳入参考，按你的表达习惯来）" in out
+    assert "今天也要加油呀" in out
     assert "组会" in out
 
 
-def test_schedule_default_has_length_requirement():
+def test_schedule_default_is_plain_intent():
     out = render(
         "schedule",
         {
@@ -54,5 +53,5 @@ def test_schedule_default_has_length_requirement():
             "item_context": "",
         },
     )
-    assert "15~30 字" in out
     assert "组会" in out
+    assert "提醒用户这件事" in out

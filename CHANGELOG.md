@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 时间解析修正：「晚上12点」解释为次日 00:00，「中午12点」保持 12:00。
 - 插件清单基线升级：宿主 `1.4.5–1.4.99`、SDK `2.23.0–2.23.99`；capabilities 收敛为 `chat.get_stream_by_user_id`、`maisaka.proactive.trigger`、`config.get`。
 
+### 修复
+
+- 日程扫描与 `list_schedules` 不再混用 aware / 朴素时间，提醒与查询恢复。
+- 定时任务使用配置时区，并设置 300 秒 misfire 宽限；查不到聊天流或宿主未接受任务时记录 warning。
+- 日程工具改用 ISO 8601 结构化时间（`start` / `end` / `all_day`），移除自然语言解析器；拒绝过去时间与 2100 年之后的时间。
+- 存储键升级为 `platform:裸ID`，启动时把旧的裸 ID 键复制迁移并保留旧键。
+- Apple 同步不再删除同步窗口之外的本地条目，空事件列表也不触发删除。
+- 删除日程先删 Apple 事件，失败时保留本地条目并报错。
+- CalDAV / WebCal 请求不再跟随重定向，3xx 直接失败。
+- 只配置 `webcal_urls` 也能启用 Apple 日历同步。
+- 未配置 Notion 时不再输出空的「待办：」段。
+
 ### 移除
 
 - 移除 `enable_schedule_reminder_fallback` 与插件直发补发链路。
@@ -49,6 +61,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A schedule reminder marks the item as triggered once the proactive request is accepted, independent of any fallback result.
 - Time parsing fix: `晚上12点` now means the next day at 00:00, while `中午12点` stays at 12:00.
 - Manifest baseline raised to host `1.4.5–1.4.99` and SDK `2.23.0–2.23.99`; capabilities reduced to `chat.get_stream_by_user_id`, `maisaka.proactive.trigger`, `config.get`.
+
+### Fixed
+
+- Schedule scanning and `list_schedules` no longer mix aware and naive datetimes.
+- Cron jobs use the configured timezone and a 300-second misfire grace; missing streams and rejected proactive tasks are logged as warnings.
+- Schedule tools now take ISO 8601 `start` / `end` / `all_day` instead of natural-language text; past times and years beyond 2100 are rejected.
+- Storage keys are now `platform:bare-id`; legacy bare-id keys are copied on startup and kept in place.
+- Apple sync never deletes entries outside the sync window, and an empty event list never triggers deletion.
+- Deleting a schedule removes the Apple event first; a failed delete keeps the local entry and reports the error.
+- CalDAV / WebCal requests no longer follow redirects; 3xx responses fail.
+- WebCal-only configuration can enable Apple calendar sync.
+- No empty "待办：" section is rendered when Notion is not configured.
 
 ### Removed
 
