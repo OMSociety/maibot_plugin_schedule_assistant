@@ -12,3 +12,7 @@ __pycache__/
 /config.toml
 data/cmd_config.json
 data/t2i_templates/
+
+# 本地缓存
+.pytest_cache/
+.ruff_cache/

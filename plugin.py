@@ -2,20 +2,17 @@
 
 从 AstrBot 插件 astrbot_plugin_schedule_assistant 迁移（AGPL-3.0）。
 
-功能分工（用户决策）：
-- 早安播报：固定格式直发（LLM + markdown，100% 送达）
-- 日程提醒（含 Apple 日历事件提前提醒）：Maisaka 自己开口
-  （ctx.maisaka.proactive.trigger，intent 注入回复生命周期）
-- 洗澡/睡觉/喝水：Maisaka 自己开口（同上，拟人化）
-- 日程 CRUD：4 个 @Tool（LLM 工具，支持单时间点 / 时间区间 / 全天）
+功能分工：
+- 全部主动推送（早安、洗澡、睡觉、喝水、日程提醒）都交给 Maisaka：
+  ctx.maisaka.proactive.trigger 注入 intent，由麦麦决定是否开口与如何表达
+- 日程 CRUD：4 个 @Tool（支持单时间点 / 时间区间 / 全天）
 - Apple 日历双向同步 / Notion 待办 / 天气：外部服务复用
-- 消息事件：不做（MaiBot 无官方用户上下文 API，昵称走配置）
 
-关键差异（相对 AstrBot 版）：
-- 主动推送：user_id → ctx.chat 查聊天流 → ctx.send.custom/text（无 UMO 路由）
-- LLM 人格：ctx.config.get() 读 MaiBot 全局 [personality]（无多人格）
-- 存储：ctx.paths.data_dir/schedule_data.json（无框架 KV）
+实现要点：
+- 推送：配置 user_ids（platform:裸 ID）→ ctx.chat 查聊天流 → Maisaka
+- 存储：ctx.paths.data_dir/schedule_data.json
 - 定时：APScheduler（on_load 启动 / on_unload 关闭）
+- 时区：basic.timezone（IANA），调度与 Apple 读写统一使用
 """
 
 import asyncio

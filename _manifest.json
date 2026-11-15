@@ -48,7 +48,7 @@
       "fallback": "package"
     }
   },
-  "capabilities": ["chat.get_stream_by_user_id", "maisaka.proactive.trigger", "config.get"],
+  "capabilities": ["chat.get_stream_by_user_id", "maisaka.proactive.trigger"],
   "i18n": {
     "default_locale": "zh-CN",
     "supported_locales": ["zh-CN", "en-US", "ja-JP"]
