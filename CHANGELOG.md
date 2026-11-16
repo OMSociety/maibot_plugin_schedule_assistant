@@ -10,6 +10,36 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-11-16
+
+### 修复
+
+- 日程扫描、早安议程与 Apple 同步统一按 `platform:裸ID` 读取存储：工具创建的日程会进入提醒，Apple 导入的日程能在日程列表中查看与删除。
+- 日程提醒的到期判定先把当前时间归一到朴素本地时间，带时区的当前时间不再让扫描抛异常。
+- 日程工具改用 `apple_calendar` 执行 Apple 写入、更新与删除；修改日程时更新同一个 Apple 事件，更新失败清空 `apple_uid`，删除失败保留本地日程。
+
+### 变更
+
+- 启动迁移会把旧裸 ID 键与完整键下的日程合并，按条目 ID 与 Apple UID 去重后删除旧键。
+
+### 移除
+
+- 移除工具侧未使用的 `_cancel_pending` 辅助函数。
+
+### Fixed
+
+- Schedule scanning, the morning agenda and Apple sync now read storage by the full `platform:bare-id` key: schedules created through tools reach reminders, and Apple-imported events can be listed and deleted.
+- Due-time evaluation normalizes the current time to a naive local datetime first, so an aware current time no longer makes the scan raise.
+- Schedule tools use `apple_calendar` for Apple create, update and delete; editing a schedule updates the same Apple event, a failed update clears `apple_uid`, and a failed delete keeps the local schedule.
+
+### Changed
+
+- Startup migration merges schedules under the legacy bare-id key and the full key, de-duplicating by item ID and Apple UID before removing the old key.
+
+### Removed
+
+- Removed the unused `_cancel_pending` helper from the tools module.
+
 ## [2.0.0] - 2026-11-16
 
 ### 新增

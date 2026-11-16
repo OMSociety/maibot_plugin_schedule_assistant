@@ -1082,11 +1082,8 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             return
         custom = self.config.prompt_settings.prompt_morning
         for target in self._targets():
-            _, bare = targets.parse_user_target(target)
-            if not bare:
-                continue
             try:
-                data = await self.morning.build(bare)
+                data = await self.morning.build(target)
             except Exception as exc:
                 self.ctx.logger.warning(
                     f"{LOG_PREFIX} 早安数据构建失败 target={target}: {exc}"
@@ -1145,12 +1142,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 1, int(self.config.schedule_reminder.schedule_reminder_minutes or 10)
             )
             for target in self._targets():
-                _, bare = targets.parse_user_target(target)
-                if not bare:
-                    continue
                 try:
                     due = await collect_due_schedule_items(
-                        self.store, bare, minutes, now
+                        self.store, target, minutes, now
                     )
                 except Exception as exc:
                     self.ctx.logger.warning(
@@ -1175,7 +1169,7 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
                 )
                 ok = await self._push(target, intent, "schedule_reminder", "schedule")
                 if ok:
-                    await mark_items_triggered(self.store, bare, due)
+                    await mark_items_triggered(self.store, target, due)
 
     # ── Apple 日历同步 ─────────────────────────────────
 
@@ -1198,12 +1192,9 @@ class ScheduleAssistantPlugin(MaiBotPlugin):
             self._last_apple_issue = reason or None
             now = datetime.now(self._timezone)
             for target in self._targets():
-                _, bare = targets.parse_user_target(target)
-                if not bare:
-                    continue
                 try:
                     stats = await self.store.sync_from_apple_calendar(
-                        bare, events, allow_delete=not issues, now=now
+                        target, events, allow_delete=not issues, now=now
                     )
                 except Exception as exc:
                     self.ctx.logger.warning(

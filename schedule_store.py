@@ -116,7 +116,7 @@ class ScheduleStore:
         return f"schedules_{user_id}"
 
     async def migrate_user(self, old_user_id: str, new_user_id: str) -> bool:
-        """把旧裸 ID 键下的日程迁移到完整目标键，成功后删除旧键。"""
+        """把旧裸 ID 键下的日程合并到完整目标键，去重后删除旧键。"""
         if not old_user_id or not new_user_id or old_user_id == new_user_id:
             return False
         async with self._lock:
@@ -126,9 +126,34 @@ class ScheduleStore:
             old_items = data.get(old_key)
             if not isinstance(old_items, list) or not old_items:
                 return False
-            if data.get(new_key):
-                return False
-            data[new_key] = list(old_items)
+            new_items = data.get(new_key)
+            if not isinstance(new_items, list):
+                new_items = []
+            known_ids = {
+                str(item.get("id"))
+                for item in new_items
+                if isinstance(item, dict) and item.get("id")
+            }
+            known_uids = {
+                str(item.get("apple_uid"))
+                for item in new_items
+                if isinstance(item, dict) and item.get("apple_uid")
+            }
+            for item in old_items:
+                if not isinstance(item, dict):
+                    continue
+                item_id = str(item.get("id") or "")
+                apple_uid = str(item.get("apple_uid") or "")
+                if (item_id and item_id in known_ids) or (
+                    apple_uid and apple_uid in known_uids
+                ):
+                    continue
+                new_items.append(item)
+                if item_id:
+                    known_ids.add(item_id)
+                if apple_uid:
+                    known_uids.add(apple_uid)
+            data[new_key] = new_items
             del data[old_key]
             self._write_all(data)
         self.logger.info(f"{LOG_PREFIX} 日程键迁移完成并删除旧键 {old_key} → {new_key}")

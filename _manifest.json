@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "omsociety.schedule-assistant",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "name": "日程提醒助手",
   "description": "贴心日程管家：早安播报、习惯提醒、日程管理与提醒，全部推送交给 Maisaka 主动发起",
   "author": {

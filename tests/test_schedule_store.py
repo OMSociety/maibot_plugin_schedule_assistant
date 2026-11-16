@@ -135,7 +135,7 @@ def test_migrate_user_moves_items_and_drops_old_key(tmp_path):
     assert "schedules_10001" not in store._read_all()
 
 
-def test_migrate_user_keeps_existing_target_data(tmp_path):
+def test_migrate_user_merges_existing_target_data(tmp_path):
     store = make_store(tmp_path)
     store.logger = logging.getLogger("test")
     run(
@@ -149,6 +149,21 @@ def test_migrate_user_keeps_existing_target_data(tmp_path):
         )
     )
 
-    assert run(store.migrate_user("10001", "qq:10001")) is False
-    assert [item.title for item in run(store.list_items("qq:10001"))] == ["新"]
-    assert [item.title for item in run(store.list_items("10001"))] == ["旧"]
+    assert run(store.migrate_user("10001", "qq:10001")) is True
+    assert [item.title for item in run(store.list_items("qq:10001"))] == ["新", "旧"]
+    assert "schedules_10001" not in store._read_all()
+
+
+def test_migrate_user_dedupes_by_apple_uid(tmp_path):
+    store = make_store(tmp_path)
+    store.logger = logging.getLogger("test")
+    old_apple = ScheduleItem.create(title="旧 Apple", time="2026-09-10 09:00")
+    old_apple.apple_uid = "apple-1"
+    run(store.add_item("10001", old_apple))
+    new_apple = ScheduleItem.create(title="新 Apple", time="2026-09-11 09:00")
+    new_apple.apple_uid = "apple-1"
+    run(store.add_item("qq:10001", new_apple))
+
+    assert run(store.migrate_user("10001", "qq:10001")) is True
+    assert [item.title for item in run(store.list_items("qq:10001"))] == ["新 Apple"]
+    assert "schedules_10001" not in store._read_all()

@@ -106,12 +106,6 @@ def _candidate_line(item: ScheduleItem) -> str:
     return f"　[{item.id}] {item.title} · {item.time} {item.context}".rstrip()
 
 
-async def _cancel_pending(plugin, target: str, item_id: str) -> None:
-    canceller = getattr(plugin, "cancel_item_scan", None)
-    if canceller is not None:
-        await canceller(target, item_id)
-
-
 async def create_schedule(
     plugin,
     title: str,
@@ -145,7 +139,7 @@ async def create_schedule(
         context=(description or "").strip(),
         all_day=all_day,
     )
-    apple = getattr(plugin, "apple", None)
+    apple = plugin.apple_calendar
     if apple is not None:
         try:
             uid = await apple.create_event(
@@ -183,7 +177,7 @@ async def delete_schedule(
     if len(matches) > 1:
         return _multiple_matches(matches)
     item = matches[0]
-    apple = getattr(plugin, "apple", None)
+    apple = plugin.apple_calendar
     if item.apple_uid and apple is not None:
         ok = await apple.delete_event(item.apple_uid)
         if not ok:
@@ -192,7 +186,6 @@ async def delete_schedule(
             )
             return "删除 Apple 日历事件失败，本地日程已保留，请稍后重试。"
     await plugin.store.remove_item(target, item.id)
-    await _cancel_pending(plugin, target, item.id)
     return f"已删除日程「{item.title}」✅"
 
 
@@ -281,8 +274,7 @@ async def update_schedule(
     if not changed:
         return "没有需要修改的内容。"
     await plugin.store.update_item(target, item)
-    await _cancel_pending(plugin, target, item.id)
-    apple = getattr(plugin, "apple", None)
+    apple = plugin.apple_calendar
     if item.apple_uid and apple is not None:
         start_dt = (
             datetime.fromisoformat(item.time)
@@ -290,15 +282,15 @@ async def update_schedule(
             else datetime.combine(date.fromisoformat(item.time), time.min)
         )
         end_dt = datetime.fromisoformat(item.end_time) if item.end_time else None
-        uid = await apple.create_event(
+        ok = await apple.update_event(
+            item.apple_uid,
             summary=item.title,
             start=start_dt,
             end=end_dt,
             description=item.context,
             all_day=item.all_day,
-            uid=item.apple_uid,
         )
-        if not uid:
+        if not ok:
             item.apple_uid = ""
             await plugin.store.update_item(target, item)
             _log(plugin).warning(

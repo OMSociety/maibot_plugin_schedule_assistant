@@ -18,6 +18,9 @@ async def collect_due_schedule_items(
 ) -> list[dict]:
     """挑出「开始前 minutes_before 分钟内」且未提醒过的日程。"""
     moment = now or datetime.now()
+    if moment.tzinfo is not None:
+        # 日程时间在存储里是配置时区的朴素本地时间，比较前把 now 归一到同一口径。
+        moment = moment.replace(tzinfo=None)
     tz = moment.tzinfo
     due: list[dict] = []
     for item in await store.list_items(user_id):

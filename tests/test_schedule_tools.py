@@ -35,13 +35,33 @@ class FakeStore:
         return len(self.items) != before
 
 
+class FakeApple:
+    def __init__(self, uid="apple-1", update_ok=True, delete_ok=True):
+        self.uid = uid
+        self.update_ok = update_ok
+        self.delete_ok = delete_ok
+        self.calls: list[tuple] = []
+
+    async def create_event(self, **kwargs):
+        self.calls.append(("create", kwargs))
+        return self.uid
+
+    async def update_event(self, uid, **kwargs):
+        self.calls.append(("update", uid, kwargs))
+        return self.update_ok
+
+    async def delete_event(self, uid):
+        self.calls.append(("delete", uid))
+        return self.delete_ok
+
+
 def make_plugin(store=None, apple=None):
     plugin = SimpleNamespace(
         _timezone=TZ,
         config=SimpleNamespace(basic=SimpleNamespace(user_ids=["qq:10001"])),
         ctx=SimpleNamespace(logger=SimpleNamespace(warning=lambda *a, **k: None)),
         store=store or FakeStore(),
-        apple=apple,
+        apple_calendar=apple,
     )
 
     def fake_now():
@@ -118,3 +138,71 @@ def test_update_and_delete_work():
     assert "已修改" in updated and item.title == "新标题"
     deleted = run(tools.delete_schedule(plugin, item.id, "", None))
     assert "已删除" in deleted and not store.items
+
+
+def test_create_schedule_writes_apple_event_and_sets_uid():
+    apple = FakeApple()
+    plugin = make_plugin(apple=apple)
+    text = run(
+        tools.create_schedule(
+            plugin, "组会", "2026-09-11T09:00", "2026-09-11T10:00", False, "", None
+        )
+    )
+    assert "已同步到 Apple 日历" in text
+    assert plugin.store.items[0].apple_uid == "apple-1"
+    assert apple.calls[0][0] == "create"
+
+
+def test_update_schedule_calls_apple_update_event():
+    item = ScheduleItem.create(title="旧标题", time="2026-09-11 09:00")
+    item.apple_uid = "apple-1"
+    store = FakeStore()
+    store.items = [item]
+    apple = FakeApple()
+    plugin = make_plugin(store, apple)
+    text = run(
+        tools.update_schedule(
+            plugin, item.id, "新标题", "2026-09-12T10:00", "", False, None
+        )
+    )
+    assert "已修改" in text
+    assert [call[0] for call in apple.calls] == ["update"]
+    assert apple.calls[0][1] == "apple-1"
+    assert item.apple_uid == "apple-1"
+
+
+def test_update_schedule_clears_uid_when_apple_rejects():
+    item = ScheduleItem.create(title="组会", time="2026-09-11 09:00")
+    item.apple_uid = "apple-1"
+    store = FakeStore()
+    store.items = [item]
+    plugin = make_plugin(store, FakeApple(update_ok=False))
+    text = run(
+        tools.update_schedule(plugin, item.id, "组会（改）", "", "", False, None)
+    )
+    assert "已修改" in text
+    assert item.apple_uid == ""
+
+
+def test_delete_schedule_deletes_apple_event():
+    item = ScheduleItem.create(title="组会", time="2026-09-11 09:00")
+    item.apple_uid = "apple-1"
+    store = FakeStore()
+    store.items = [item]
+    apple = FakeApple()
+    plugin = make_plugin(store, apple)
+    text = run(tools.delete_schedule(plugin, item.id, "", None))
+    assert "已删除" in text
+    assert apple.calls == [("delete", "apple-1")]
+    assert store.items == []
+
+
+def test_delete_schedule_keeps_local_when_apple_delete_fails():
+    item = ScheduleItem.create(title="组会", time="2026-09-11 09:00")
+    item.apple_uid = "apple-1"
+    store = FakeStore()
+    store.items = [item]
+    plugin = make_plugin(store, FakeApple(delete_ok=False))
+    text = run(tools.delete_schedule(plugin, item.id, "", None))
+    assert "本地日程已保留" in text
+    assert store.items == [item]
